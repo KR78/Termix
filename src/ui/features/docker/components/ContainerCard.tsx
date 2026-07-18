@@ -210,7 +210,7 @@ export function ContainerCard({
           title={container.state}
         />
 
-        <div className="flex flex-col min-w-0 w-44 shrink-0">
+        <div className="flex flex-col min-w-0 w-64 shrink-0">
           <span className="text-xs font-bold truncate" title={containerName}>
             {containerName}
           </span>
