@@ -13,11 +13,19 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   Trash2,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/button.tsx";
 import { Input } from "@/components/input.tsx";
+import { Label } from "@/components/label.tsx";
+import { Switch } from "@/components/switch.tsx";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/popover.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,6 +58,10 @@ type FileManagerToolbarProps = {
   setSortBy: (sortBy: SortBy) => void;
   sortOrder: SortOrder;
   setSortOrder: (sortOrder: SortOrder) => void;
+  singleClickFolders: boolean;
+  setSingleClickFolders: (v: boolean) => void;
+  singleClickFiles: boolean;
+  setSingleClickFiles: (v: boolean) => void;
   setMobileSidebarOpen: (updater: (open: boolean) => boolean) => void;
   goBack: () => void;
   goForward: () => void;
@@ -118,6 +130,10 @@ export function FileManagerToolbar({
   setSortBy,
   sortOrder,
   setSortOrder,
+  singleClickFolders,
+  setSingleClickFolders,
+  singleClickFiles,
+  setSingleClickFiles,
   setMobileSidebarOpen,
   goBack,
   goForward,
@@ -236,6 +252,65 @@ export function FileManagerToolbar({
               <List className="size-4" />
             </Button>
           </div>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-none"
+                title={t("fileManager.clickSettings")}
+                aria-label={t("fileManager.clickSettings")}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-72 rounded-none border-border bg-card p-4"
+            >
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-accent-brand">
+                    {t("fileManager.clickSettings")}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {t("fileManager.clickSettingsDesc")}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-col gap-0.5 flex-1">
+                      <Label className="text-xs font-bold tracking-tight">
+                        {t("fileManager.singleClickFolders")}
+                      </Label>
+                      <span className="text-[10px] text-muted-foreground leading-snug">
+                        {t("fileManager.singleClickFoldersDesc")}
+                      </span>
+                    </div>
+                    <Switch
+                      checked={singleClickFolders}
+                      onCheckedChange={setSingleClickFolders}
+                    />
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-col gap-0.5 flex-1">
+                      <Label className="text-xs font-bold tracking-tight">
+                        {t("fileManager.singleClickFiles")}
+                      </Label>
+                      <span className="text-[10px] text-muted-foreground leading-snug">
+                        {t("fileManager.singleClickFilesDesc")}
+                      </span>
+                    </div>
+                    <Switch
+                      checked={singleClickFiles}
+                      onCheckedChange={setSingleClickFiles}
+                    />
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           <label
             className="hidden md:block cursor-pointer"

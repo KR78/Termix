@@ -129,6 +129,12 @@ function FileManagerContent({
     const saved = localStorage.getItem("fileManagerSortOrder");
     return saved === "asc" || saved === "desc" ? saved : "asc";
   });
+  const [singleClickFolders, setSingleClickFolders] = useState<boolean>(() => {
+    return localStorage.getItem("fileManagerSingleClickFolders") === "true";
+  });
+  const [singleClickFiles, setSingleClickFiles] = useState<boolean>(() => {
+    return localStorage.getItem("fileManagerSingleClickFiles") === "true";
+  });
   const [totpRequired, setTotpRequired] = useState(false);
   const [totpSessionId, setTotpSessionId] = useState<string | null>(null);
   const [totpPrompt, setTotpPrompt] = useState<string>("");
@@ -1281,7 +1287,7 @@ function FileManagerContent({
       const symlinkInfo = await identifySSHSymlink(currentSessionId, file.path);
 
       if (symlinkInfo.type === "directory") {
-        setCurrentPath(symlinkInfo.target);
+        navigateTo(symlinkInfo.target);
       } else if (symlinkInfo.type === "file") {
         const windowCount = Date.now() % 10;
         const offsetX = 120 + windowCount * 30;
@@ -1379,8 +1385,7 @@ function FileManagerContent({
 
   async function handleFileOpen(file: FileItem) {
     if (file.type === "directory") {
-      if (sshSessionId) setIsLoading(true);
-      setCurrentPath(file.path);
+      navigateTo(file.path);
       return;
     }
 
@@ -2768,6 +2773,7 @@ function FileManagerContent({
 
   useEffect(() => {
     setCreateIntent(null);
+    setSearchQuery("");
   }, [currentPath]);
 
   useEffect(() => {
@@ -2799,6 +2805,20 @@ function FileManagerContent({
     localStorage.setItem("fileManagerSortBy", sortBy);
     localStorage.setItem("fileManagerSortOrder", sortOrder);
   }, [sortBy, sortOrder]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "fileManagerSingleClickFolders",
+      String(singleClickFolders),
+    );
+  }, [singleClickFolders]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "fileManagerSingleClickFiles",
+      String(singleClickFiles),
+    );
+  }, [singleClickFiles]);
 
   const filteredFiles = useMemo(
     () =>
@@ -2885,6 +2905,10 @@ function FileManagerContent({
           setSortBy={setSortBy}
           sortOrder={sortOrder}
           setSortOrder={setSortOrder}
+          singleClickFolders={singleClickFolders}
+          setSingleClickFolders={setSingleClickFolders}
+          singleClickFiles={singleClickFiles}
+          setSingleClickFiles={setSingleClickFiles}
           setMobileSidebarOpen={setMobileSidebarOpen}
           goBack={goBack}
           goForward={goForward}
@@ -2946,6 +2970,8 @@ function FileManagerContent({
                 onUpload={handleFilesDropped}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
+                singleClickFolders={singleClickFolders}
+                singleClickFiles={singleClickFiles}
                 onSortChange={(field) => {
                   if (field === sortBy) {
                     setSortOrder(sortOrder === "asc" ? "desc" : "asc");

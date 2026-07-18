@@ -9,6 +9,8 @@ import {
   AlertCircle,
   Box,
   ExternalLink,
+  LayoutGrid,
+  List as ListIcon,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -102,6 +104,16 @@ function DockerManagerInner({
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [retryCount, setRetryCount] = React.useState(0);
+  const [viewLayout, setViewLayout] = React.useState<"grid" | "compact">(
+    () =>
+      localStorage.getItem("dockerViewLayout") === "compact"
+        ? "compact"
+        : "grid",
+  );
+
+  React.useEffect(() => {
+    localStorage.setItem("dockerViewLayout", viewLayout);
+  }, [viewLayout]);
 
   const activityLoggedRef = React.useRef(false);
   const activityLoggingRef = React.useRef(false);
@@ -727,6 +739,28 @@ function DockerManagerInner({
                   </option>
                 </select>
                 <Separator orientation="vertical" className="h-8 mx-1" />
+                <div className="flex items-center border border-border overflow-hidden">
+                  <Button
+                    variant={viewLayout === "grid" ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() => setViewLayout("grid")}
+                    className={`size-8 rounded-none border-y-0 border-l-0 border-r border-border ${viewLayout === "grid" ? "bg-accent-brand/10 text-accent-brand" : ""}`}
+                    title={t("docker.gridView")}
+                    aria-label={t("docker.gridView")}
+                  >
+                    <LayoutGrid className="size-4" />
+                  </Button>
+                  <Button
+                    variant={viewLayout === "compact" ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() => setViewLayout("compact")}
+                    className={`size-8 rounded-none border-y-0 border-r-0 border-border ${viewLayout === "compact" ? "bg-accent-brand/10 text-accent-brand" : ""}`}
+                    title={t("docker.compactView")}
+                    aria-label={t("docker.compactView")}
+                  >
+                    <ListIcon className="size-4" />
+                  </Button>
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -769,6 +803,7 @@ function DockerManagerInner({
                   onRefresh={refreshContainers}
                   search={search}
                   statusFilter={statusFilter}
+                  viewLayout={viewLayout}
                 />
               )
             ) : null}

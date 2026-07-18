@@ -30,6 +30,7 @@ interface ContainerCardProps {
   onSelect?: () => void;
   isSelected?: boolean;
   onRefresh?: () => void;
+  variant?: "grid" | "compact";
 }
 
 export function DockerBadge({ state }: { state: DockerContainer["state"] }) {
@@ -57,6 +58,7 @@ export function ContainerCard({
   onSelect,
   isSelected = false,
   onRefresh,
+  variant = "grid",
 }: ContainerCardProps): React.ReactElement {
   const { t } = useTranslation();
   const { confirmWithToast } = useConfirmation();
@@ -76,6 +78,16 @@ export function ContainerCard({
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
+  const shortPorts = portsList.slice(0, 4);
+
+  const stateColor =
+    container.state === "running"
+      ? "bg-accent-brand"
+      : container.state === "paused"
+        ? "bg-yellow-500"
+        : container.state === "restarting"
+          ? "bg-blue-400"
+          : "bg-destructive/60";
 
   const handleStart = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -186,6 +198,136 @@ export function ContainerCard({
       t("common.cancel"),
     );
   };
+
+  if (variant === "compact") {
+    return (
+      <div
+        className={`group flex items-center gap-3 px-3 py-2 border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-muted/40 ${isSelected ? "bg-accent-brand/5" : ""}`}
+        onClick={onSelect}
+      >
+        <span
+          className={`size-2 rounded-full shrink-0 ${stateColor} ${container.state === "restarting" ? "animate-pulse" : ""}`}
+          title={container.state}
+        />
+
+        <div className="flex flex-col min-w-0 w-44 shrink-0">
+          <span className="text-xs font-bold truncate" title={containerName}>
+            {containerName}
+          </span>
+          <span className="text-[10px] font-mono text-muted-foreground truncate">
+            {container.id.substring(0, 12)}
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          <span
+            className="text-[11px] font-mono text-foreground/80 truncate"
+            title={container.image}
+          >
+            {container.image}
+          </span>
+          {shortPorts.length > 0 && (
+            <div className="flex gap-1 flex-wrap">
+              {shortPorts.map((p) => (
+                <span
+                  key={p}
+                  className="text-[9px] font-mono px-1 border border-border bg-muted/30 text-muted-foreground"
+                >
+                  {p}
+                </span>
+              ))}
+              {portsList.length > shortPorts.length && (
+                <span className="text-[9px] font-mono text-muted-foreground">
+                  +{portsList.length - shortPorts.length}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <DockerBadge state={container.state} />
+          <span
+            className="text-[10px] text-muted-foreground italic hidden lg:inline max-w-32 truncate"
+            title={container.status}
+          >
+            {container.status}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-0.5 shrink-0">
+          {container.state !== "running" && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-accent-brand"
+              disabled={isLoading}
+              onClick={handleStart}
+            >
+              {isStarting ? (
+                <RefreshCw className="size-3 animate-spin" />
+              ) : (
+                <Play className="size-3" />
+              )}
+            </Button>
+          )}
+          {container.state === "running" && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-destructive"
+              disabled={isLoading}
+              onClick={handleStop}
+            >
+              {isStopping ? (
+                <RefreshCw className="size-3 animate-spin" />
+              ) : (
+                <Square className="size-3" />
+              )}
+            </Button>
+          )}
+          {(container.state === "running" ||
+            container.state === "paused") && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={isLoading}
+              onClick={handlePause}
+            >
+              {isPausing ? (
+                <RefreshCw className="size-3 animate-spin" />
+              ) : container.state === "paused" ? (
+                <PlayCircle className="size-3" />
+              ) : (
+                <Pause className="size-3" />
+              )}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            disabled={isLoading || container.state === "exited"}
+            onClick={handleRestart}
+          >
+            {isRestarting ? (
+              <RefreshCw className="size-3 animate-spin" />
+            ) : (
+              <RotateCw className="size-3" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-destructive"
+            disabled={isLoading}
+            onClick={handleRemove}
+          >
+            <Trash2 className="size-3" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Card

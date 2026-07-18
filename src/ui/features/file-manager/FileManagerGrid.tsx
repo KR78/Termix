@@ -66,6 +66,8 @@ interface FileManagerGridProps {
   sortBy?: "name" | "modified" | "size";
   sortOrder?: "asc" | "desc";
   onSortChange?: (field: "name" | "modified" | "size") => void;
+  singleClickFolders?: boolean;
+  singleClickFiles?: boolean;
 }
 
 const getFileTypeColor = (file: FileItem): string => {
@@ -181,6 +183,8 @@ export function FileManagerGrid({
   sortBy,
   sortOrder,
   onSortChange,
+  singleClickFolders = false,
+  singleClickFiles = false,
 }: FileManagerGridProps) {
   const { t } = useTranslation();
   const gridRef = useRef<HTMLDivElement>(null);
@@ -586,33 +590,45 @@ export function FileManagerGrid({
       gridRef.current.focus();
     }
 
-    if (event.detail === 2) {
+    const multiSelect = event.ctrlKey || event.metaKey;
+    const rangeSelect = event.shiftKey;
+
+    // Modifier-clicks always select, never open, regardless of click mode
+    if (rangeSelect && selectedFiles.length > 0) {
+      const lastSelected = selectedFiles[selectedFiles.length - 1];
+      const currentIndex = files.findIndex((f) => f.path === file.path);
+      const lastIndex = files.findIndex((f) => f.path === lastSelected.path);
+
+      if (currentIndex !== -1 && lastIndex !== -1) {
+        const start = Math.min(currentIndex, lastIndex);
+        const end = Math.max(currentIndex, lastIndex);
+        const rangeFiles = files.slice(start, end + 1);
+        onSelectionChange(rangeFiles);
+      }
+      return;
+    }
+
+    if (multiSelect) {
+      const isSelected = selectedFiles.some((f) => f.path === file.path);
+      if (isSelected) {
+        onSelectionChange(selectedFiles.filter((f) => f.path !== file.path));
+      } else {
+        onSelectionChange([...selectedFiles, file]);
+      }
+      return;
+    }
+
+    // No modifiers — decide between open and select based on click-mode settings.
+    // Double-click always opens (event.detail === 2). Single-click opens only
+    // if the user has enabled single-click mode for this file type.
+    const singleClickOpen =
+      (file.type === "directory" && singleClickFolders) ||
+      (file.type !== "directory" && singleClickFiles);
+
+    if (singleClickOpen || event.detail === 2) {
       onFileOpen(file);
     } else {
-      const multiSelect = event.ctrlKey || event.metaKey;
-      const rangeSelect = event.shiftKey;
-
-      if (rangeSelect && selectedFiles.length > 0) {
-        const lastSelected = selectedFiles[selectedFiles.length - 1];
-        const currentIndex = files.findIndex((f) => f.path === file.path);
-        const lastIndex = files.findIndex((f) => f.path === lastSelected.path);
-
-        if (currentIndex !== -1 && lastIndex !== -1) {
-          const start = Math.min(currentIndex, lastIndex);
-          const end = Math.max(currentIndex, lastIndex);
-          const rangeFiles = files.slice(start, end + 1);
-          onSelectionChange(rangeFiles);
-        }
-      } else if (multiSelect) {
-        const isSelected = selectedFiles.some((f) => f.path === file.path);
-        if (isSelected) {
-          onSelectionChange(selectedFiles.filter((f) => f.path !== file.path));
-        } else {
-          onSelectionChange([...selectedFiles, file]);
-        }
-      } else {
-        onSelectionChange([file]);
-      }
+      onSelectionChange([file]);
     }
   };
 

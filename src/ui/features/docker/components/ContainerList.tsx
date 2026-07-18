@@ -12,6 +12,7 @@ interface ContainerListProps {
   onRefresh?: () => void;
   search?: string;
   statusFilter?: string;
+  viewLayout?: "grid" | "compact";
 }
 
 export function ContainerList({
@@ -22,6 +23,7 @@ export function ContainerList({
   onRefresh,
   search = "",
   statusFilter = "all",
+  viewLayout = "grid",
 }: ContainerListProps): React.ReactElement {
   const { t } = useTranslation();
 
@@ -62,6 +64,24 @@ export function ContainerList({
         <span className="text-xs font-semibold">
           {t("docker.noContainersMatchFiltersHint")}
         </span>
+      </div>
+    );
+  }
+
+  if (viewLayout === "compact") {
+    return (
+      <div className="flex flex-col border border-border bg-card overflow-hidden">
+        {filtered.map((container) => (
+          <ContainerCard
+            key={container.id}
+            container={container}
+            sessionId={sessionId}
+            onSelect={() => onSelectContainer(container.id)}
+            isSelected={selectedContainerId === container.id}
+            onRefresh={onRefresh}
+            variant="compact"
+          />
+        ))}
       </div>
     );
   }
