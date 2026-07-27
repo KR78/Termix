@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useConfirmation } from "@/hooks/use-confirmation.ts";
@@ -29,6 +29,7 @@ import { getSSHHosts } from "@/api/ssh-host-management-api";
 import type { SSHHost } from "@/types/index";
 import { Button } from "@/components/button";
 import { Input } from "@/components/input";
+import { FolderPathPicker } from "./FolderPathPicker";
 import { Separator } from "@/components/separator";
 import {
   Dialog,
@@ -150,6 +151,14 @@ function SnippetFormDialog({
     new Set(),
   );
 
+  const folderMeta = useMemo(() => {
+    const map = new Map<string, { color?: string; icon?: string }>();
+    for (const f of folders) {
+      map.set(f.name, { color: f.color ?? undefined, icon: f.icon });
+    }
+    return map;
+  }, [folders]);
+
   useEffect(() => {
     if (open) {
       setName(snippet?.name ?? "");
@@ -238,20 +247,12 @@ function SnippetFormDialog({
                 ({t("newUi.sidebar.snippets.optional")})
               </span>
             </label>
-            <select
+            <FolderPathPicker
               value={folder ?? ""}
-              onChange={(e) =>
-                setFolder(e.target.value === "" ? null : e.target.value)
-              }
-              className="px-3 py-2 text-sm bg-background border border-border text-foreground outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="">{t("newUi.sidebar.snippets.noFolder")}</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.name}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+              onChange={(path) => setFolder(path === "" ? null : path)}
+              folderPaths={folders.map((f) => f.name)}
+              folderMeta={folderMeta}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold">
@@ -908,12 +909,14 @@ function SnippetCard({
         onDragEnd={onDragEnd}
         className={`border bg-background p-2.5 flex flex-col gap-2 group/card transition-opacity ${isDragging ? "opacity-40" : "opacity-100"} border-border`}
       >
-        <div className="flex items-start gap-2">
+        <div className="flex items-start gap-2 min-w-0">
           <GripVertical className="size-3.5 mt-0.5 shrink-0 text-muted-foreground/30 group-hover/card:text-muted-foreground/60 cursor-grab active:cursor-grabbing transition-colors" />
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="text-xs font-semibold">{snippet.name}</span>
+            <span className="text-xs font-semibold break-words">
+              {snippet.name}
+            </span>
             {snippet.description && (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs text-muted-foreground break-words">
                 {snippet.description}
               </span>
             )}
@@ -925,7 +928,7 @@ function SnippetCard({
             />
           )}
         </div>
-        <span className="text-xs text-muted-foreground font-mono px-1">
+        <span className="text-xs text-muted-foreground font-mono px-1 min-w-0 break-all whitespace-pre-wrap">
           {snippet.content}
         </span>
         {targetHosts.length > 0 && (
@@ -936,7 +939,7 @@ function SnippetCard({
                 className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-brand/10 text-accent-brand border border-accent-brand/20"
               >
                 <Server className="size-2.5" />
-                {host.name || host.ip}
+                <span className="min-w-0 truncate">{host.name || host.ip}</span>
               </span>
             ))}
           </div>

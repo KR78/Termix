@@ -44,7 +44,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -92,7 +92,7 @@ jobs:
           token: ${{ secrets.GHCR_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: "npm"
@@ -144,7 +144,7 @@ jobs:
           token: ${{ secrets.GHCR_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -225,7 +225,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -278,7 +278,7 @@ jobs:
 
           MAIN_SHA=$(gh api repos/${{ github.repository }}/commits/main -q .sha)
           echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
-          echo "build_ref=main" >> "$GITHUB_OUTPUT"
+          echo "build_ref=$MAIN_SHA" >> "$GITHUB_OUTPUT"
 
   docker:
     needs: [prep, merge-to-main]
@@ -287,6 +287,7 @@ jobs:
       version: ${{ needs.prep.outputs.version }}
       build_type: Production
       dry_run: ${{ inputs.mode == 'Dry run' }}
+      source_ref: ${{ needs.merge-to-main.outputs.build_ref }}
     secrets: inherit
 
   create-release:
@@ -303,7 +304,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -351,15 +352,17 @@ jobs:
       build_type: all
       artifact_destination: ${{ inputs.mode == 'Dry run' && 'file' || 'release' }}
       release_tag: ${{ needs.prep.outputs.release_tag }}
+      source_ref: ${{ needs.merge-to-main.outputs.build_ref }}
     secrets: inherit
 
   electron-submit:
-    needs: [prep, electron-release]
+    needs: [prep, merge-to-main, electron-release]
     if: ${{ inputs.mode != 'Dry run' && inputs.mode != 'Skip submit' }}
     uses: ./.github/workflows/electron.yml
     with:
       build_type: all
       artifact_destination: submit
+      source_ref: ${{ needs.merge-to-main.outputs.build_ref }}
     secrets: inherit
 
   cask-commit-back:
@@ -386,20 +389,21 @@ jobs:
             exit 0
           fi
 
-          sed -i "s|version \".*\"|version \"$VERSION\"|g" Casks/termix.rb
-          sed -i "s|sha256 \".*\"|sha256 \"$DMG_SHA256\"|g" Casks/termix.rb
+          git config user.name "LukeGus"
+          git config user.email "bugattiguy527@gmail.com"
 
-          if git diff --quiet Casks/termix.rb; then
+          git fetch origin main
+          git checkout -B main origin/main
+
+          sed -i "s|version \".*\"|version \"$VERSION\"|g" packaging/Casks/termix.rb
+          sed -i "s|sha256 \".*\"|sha256 \"$DMG_SHA256\"|g" packaging/Casks/termix.rb
+
+          git add packaging/Casks/termix.rb
+          if git diff --cached --quiet; then
             echo "Cask already up to date."
             exit 0
           fi
 
-          git config user.name "LukeGus"
-          git config user.email "bugattiguy527@gmail.com"
-          git add Casks/termix.rb
-          git stash
-          git pull --rebase origin main
-          git stash pop
           git commit -m "chore: bump Homebrew cask to $VERSION"
           git push origin HEAD:main
 
@@ -416,7 +420,7 @@ jobs:
           path: termix
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: "termix/.nvmrc"
           cache: "npm"
@@ -509,7 +513,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -530,9 +534,14 @@ jobs:
         docs,
         publish-youtube,
       ]
-    if: ${{ always() && (inputs.mode == 'Everything' || inputs.mode == 'Skip submit') && needs.merge-to-main.result == 'success' && needs.electron-release.result == 'success' && needs.cask-commit-back.result == 'success' && needs.docs.result == 'success' && needs.publish-youtube.result == 'success' }}
+    if: ${{ always() && (inputs.mode == 'Everything' || inputs.mode == 'Skip submit') && needs.merge-to-main.result == 'success' && needs.electron-release.result == 'success' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
       - name: Delete dev branch in Termix
         env:
           GH_TOKEN: ${{ secrets.GHCR_TOKEN }}

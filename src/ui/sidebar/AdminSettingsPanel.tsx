@@ -40,12 +40,19 @@ import {
   updateTailscaleSettings,
   getHostDefaults,
   updateHostDefaults,
+  getAnalyticsEnabled,
+  updateAnalyticsEnabled,
   type HostDefaults,
 } from "@/api/settings-api";
+import {
+  getSessionSharingGloballyEnabled,
+  updateSessionSharingGloballyEnabled,
+} from "@/api/session-sharing-api";
 import {
   getAcmeSslSettings,
   updateAcmeSslSettings,
   requestAcmeCertificate,
+  uploadManualSslCertificate,
   type AcmeSettings,
 } from "@/api/acme-ssl-api";
 import {
@@ -69,7 +76,7 @@ import {
   type AdminUser,
 } from "./AdminManagementSections";
 import { toast } from "sonner";
-import { getBasePath } from "@/lib/base-path";
+import { getDatabaseTransferUrl } from "@/lib/database-transfer-url";
 import {
   AdminDatabaseSection,
   AdminGeneralSettingsSection,
@@ -86,6 +93,8 @@ import {
   AdminLinkAccountDialog,
   AdminUnlinkAccountDialog,
 } from "./AdminUserDialogs";
+import { AdminUserManagePanel } from "./AdminUserManagePanel";
+import type { Host } from "@/types/ui-types";
 
 type ApiErrorLike = {
   response?: {
@@ -99,11 +108,18 @@ function apiErrorMessage(error: unknown, fallback: string) {
   return (error as ApiErrorLike).response?.data?.error || fallback;
 }
 
-export function AdminSettingsPanel() {
+export function AdminSettingsPanel({
+  onEditingChange,
+  onOpenHostTab,
+}: {
+  onEditingChange?: (editing: boolean) => void;
+  onOpenHostTab?: (host: Host) => void;
+} = {}) {
   const { t } = useTranslation();
-  const [openSection, setOpenSection] = useState<AdminSection | null>(
-    "general",
+  const [openSections, setOpenSections] = useState<Set<AdminSection>>(
+    () => new Set(["general"]),
   );
+  const [manageUser, setManageUser] = useState<AdminUser | null>(null);
   const [allowRegistration, setAllowRegistration] = useState(true);
   const [allowPasswordLogin, setAllowPasswordLogin] = useState(true);
   const [allowPasswordReset, setAllowPasswordReset] = useState(true);
@@ -116,6 +132,9 @@ export function AdminSettingsPanel() {
   const [logLevel, setLogLevel] = useState("info");
   const [tailscaleApiKey, setTailscaleApiKey] = useState("");
   const [commandHistoryEnabled, setCommandHistoryEnabled] = useState(true);
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(true);
+  const [sessionSharingGloballyEnabled, setSessionSharingGloballyEnabled] =
+    useState(true);
   const [hostDefaults, setHostDefaults] = useState<HostDefaults>({});
 
   // SSO / auto-provision state
@@ -190,6 +209,9 @@ export function AdminSettingsPanel() {
     useState<AcmeSettings>(defaultAcmeSettings);
   const [cloudflareTokenDraft, setCloudflareTokenDraft] = useState("");
   const [acmeRequesting, setAcmeRequesting] = useState(false);
+  const [manualCertDraft, setManualCertDraft] = useState("");
+  const [manualKeyDraft, setManualKeyDraft] = useState("");
+  const [manualUploading, setManualUploading] = useState(false);
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [sessions, setSessions] = useState<AdminSession[]>([]);
@@ -204,6 +226,11 @@ export function AdminSettingsPanel() {
     loadGeneralSettings();
     loadSSOProviders();
   }, []);
+
+  useEffect(() => {
+    onEditingChange?.(manageUser !== null);
+    return () => onEditingChange?.(false);
+  }, [manageUser, onEditingChange]);
 
   useEffect(() => {
     if (editUserOpen && editUserTarget) {
@@ -226,6 +253,8 @@ export function AdminSettingsPanel() {
             isAdmin: user.is_admin,
             isOidc: user.is_oidc,
             passwordHash: user.password_hash,
+            dataUnlocked: user.data_unlocked,
+            totpEnabled: user.totp_enabled,
           })),
         ),
       )
@@ -264,6 +293,8 @@ export function AdminSettingsPanel() {
         oidcSilent,
         tailscale,
         cmdHistory,
+        analytics,
+        sessionSharingEnabled,
       ] = await Promise.allSettled([
         getRegistrationAllowed(),
         getPasswordLoginAllowed(),
@@ -276,6 +307,8 @@ export function AdminSettingsPanel() {
         getOidcSilentLoginDefault(),
         getTailscaleSettings(),
         getCommandHistoryEnabled(),
+        getAnalyticsEnabled(),
+        getSessionSharingGloballyEnabled(),
       ]);
 
       if (reg.status === "fulfilled") setAllowRegistration(reg.value.allowed);
@@ -307,6 +340,12 @@ export function AdminSettingsPanel() {
       if (cmdHistory.status === "fulfilled") {
         setCommandHistoryEnabled(cmdHistory.value.enabled);
       }
+      if (analytics.status === "fulfilled") {
+        setAnalyticsEnabled(analytics.value.enabled);
+      }
+      if (sessionSharingEnabled.status === "fulfilled") {
+        setSessionSharingGloballyEnabled(sessionSharingEnabled.value.enabled);
+      }
     } catch {
       // non-fatal
     }
@@ -330,7 +369,12 @@ export function AdminSettingsPanel() {
   }
 
   function toggle(id: AdminSection) {
-    setOpenSection((prev) => (prev === id ? null : id));
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   async function handleSaveHostDefaults() {
@@ -406,6 +450,28 @@ export function AdminSettingsPanel() {
     } catch {
       setCommandHistoryEnabled(!newVal);
       toast.error(t("admin.updateCommandHistoryFailed"));
+    }
+  }
+
+  async function handleToggleAnalytics() {
+    const newVal = !analyticsEnabled;
+    setAnalyticsEnabled(newVal);
+    try {
+      await updateAnalyticsEnabled(newVal);
+    } catch {
+      setAnalyticsEnabled(!newVal);
+      toast.error(t("admin.updateAnalyticsFailed"));
+    }
+  }
+
+  async function handleToggleSessionSharingGloballyEnabled() {
+    const newVal = !sessionSharingGloballyEnabled;
+    setSessionSharingGloballyEnabled(newVal);
+    try {
+      await updateSessionSharingGloballyEnabled(newVal);
+    } catch {
+      setSessionSharingGloballyEnabled(!newVal);
+      toast.error(t("admin.updateSessionSharingFailed"));
     }
   }
 
@@ -570,6 +636,28 @@ export function AdminSettingsPanel() {
     }
   }
 
+  async function handleManualSslUpload() {
+    if (!manualCertDraft.trim() || !manualKeyDraft.trim()) {
+      toast.error(t("admin.sslManualRequiresFields"));
+      return;
+    }
+    setManualUploading(true);
+    try {
+      const result = await uploadManualSslCertificate({
+        certificate: manualCertDraft,
+        privateKey: manualKeyDraft,
+      });
+      setAcmeSettings(result);
+      setManualCertDraft("");
+      setManualKeyDraft("");
+      toast.success(t("admin.sslManualUploadSuccess"));
+    } catch (e) {
+      toast.error(apiErrorMessage(e, t("admin.sslManualUploadFailed")));
+    } finally {
+      setManualUploading(false);
+    }
+  }
+
   function handleProviderSaved(saved: SSOProvider) {
     setSsoProviders((prev) => {
       const idx = prev.findIndex((p) => p.id === saved.id);
@@ -717,17 +805,11 @@ export function AdminSettingsPanel() {
   async function handleExportDatabase() {
     setExportLoading(true);
     try {
-      const isDev =
-        !isElectron() &&
-        (window.location.port === "5173" ||
-          window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1");
-
-      const apiUrl = isElectron()
-        ? `${window.configuredServerUrl}/database/export`
-        : isDev
-          ? `http://localhost:30001/database/export`
-          : `${window.location.protocol}//${window.location.host}${getBasePath()}/database/export`;
+      const apiUrl = getDatabaseTransferUrl("export", {
+        electron: isElectron(),
+        configuredServerUrl: null,
+        location: window.location,
+      });
 
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -769,17 +851,11 @@ export function AdminSettingsPanel() {
     }
     setImportLoading(true);
     try {
-      const isDev =
-        !isElectron() &&
-        (window.location.port === "5173" ||
-          window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1");
-
-      const apiUrl = isElectron()
-        ? `${window.configuredServerUrl}/database/import`
-        : isDev
-          ? `http://localhost:30001/database/import`
-          : `${window.location.protocol}//${window.location.host}${getBasePath()}/database/import`;
+      const apiUrl = getDatabaseTransferUrl("import", {
+        electron: isElectron(),
+        configuredServerUrl: null,
+        location: window.location,
+      });
 
       const formData = new FormData();
       formData.append("file", importFile);
@@ -823,11 +899,40 @@ export function AdminSettingsPanel() {
     }
   }
 
+  if (manageUser) {
+    return (
+      <AdminUserManagePanel
+        key={manageUser.id}
+        user={manageUser}
+        roles={roles}
+        onBack={() => setManageUser(null)}
+        onOpenHostTab={onOpenHostTab}
+        onUserDeleted={() => {
+          setUsers((prev) => prev.filter((u) => u.id !== manageUser.id));
+          setManageUser(null);
+        }}
+        onTotpDisabled={() => {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === manageUser.id ? { ...u, totpEnabled: false } : u,
+            ),
+          );
+        }}
+      />
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-2 p-3 flex-1 min-h-0 overflow-y-auto">
       <AdminGeneralSettingsSection
-        open={openSection === "general"}
+        open={openSections.has("general")}
         onToggle={() => toggle("general")}
+        analyticsEnabled={analyticsEnabled}
+        handleToggleAnalytics={handleToggleAnalytics}
+        sessionSharingGloballyEnabled={sessionSharingGloballyEnabled}
+        handleToggleSessionSharingGloballyEnabled={
+          handleToggleSessionSharingGloballyEnabled
+        }
         allowRegistration={allowRegistration}
         handleToggleRegistration={handleToggleRegistration}
         allowPasswordLogin={allowPasswordLogin}
@@ -863,7 +968,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminSSOSection
-        open={openSection === "sso"}
+        open={openSections.has("sso")}
         onToggle={() => toggle("sso")}
         providers={ssoProviders}
         onAddProvider={handleAddProvider}
@@ -880,7 +985,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminUsersSection
-        open={openSection === "users"}
+        open={openSections.has("users")}
         onToggle={() => toggle("users")}
         users={users}
         setUsers={setUsers}
@@ -892,10 +997,11 @@ export function AdminSettingsPanel() {
         setLinkAccountOpen={setLinkAccountOpen}
         setUnlinkAccountTarget={setUnlinkAccountTarget}
         setUnlinkAccountOpen={setUnlinkAccountOpen}
+        onManageUser={setManageUser}
       />
 
       <AdminSessionsSection
-        open={openSection === "sessions"}
+        open={openSections.has("sessions")}
         onToggle={() => toggle("sessions")}
         sessions={sessions}
         setSessions={setSessions}
@@ -903,7 +1009,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminRolesSection
-        open={openSection === "roles"}
+        open={openSections.has("roles")}
         onToggle={() => toggle("roles")}
         roles={roles}
         setRoles={setRoles}
@@ -920,7 +1026,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminHostDefaultsSection
-        open={openSection === "host-defaults"}
+        open={openSections.has("host-defaults")}
         onToggle={() => toggle("host-defaults")}
         defaults={hostDefaults}
         setDefaults={setHostDefaults}
@@ -928,7 +1034,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminDatabaseSection
-        open={openSection === "database"}
+        open={openSections.has("database")}
         onToggle={() => toggle("database")}
         importFile={importFile}
         setImportFile={setImportFile}
@@ -939,7 +1045,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminSSLSection
-        open={openSection === "ssl"}
+        open={openSections.has("ssl")}
         onToggle={() => toggle("ssl")}
         settings={acmeSettings}
         setSettings={setAcmeSettings}
@@ -948,10 +1054,16 @@ export function AdminSettingsPanel() {
         requesting={acmeRequesting}
         handleSave={handleSaveAcmeSettings}
         handleRequest={handleRequestAcmeCertificate}
+        manualCertDraft={manualCertDraft}
+        setManualCertDraft={setManualCertDraft}
+        manualKeyDraft={manualKeyDraft}
+        setManualKeyDraft={setManualKeyDraft}
+        manualUploading={manualUploading}
+        handleManualUpload={handleManualSslUpload}
       />
 
       <AdminApiKeysSection
-        open={openSection === "api-keys"}
+        open={openSections.has("api-keys")}
         onToggle={() => toggle("api-keys")}
         apiKeys={apiKeys}
         setApiKeys={setApiKeys}
@@ -972,7 +1084,7 @@ export function AdminSettingsPanel() {
       />
 
       <AdminAuditLogSection
-        open={openSection === "audit-log"}
+        open={openSections.has("audit-log")}
         onToggle={() => toggle("audit-log")}
         users={users}
       />

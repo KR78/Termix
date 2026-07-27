@@ -41,6 +41,26 @@ declare module "guacamole-common-js" {
       constructor(url: string);
     }
 
+    class SessionRecording {
+      constructor(source: Blob | Tunnel, refreshInterval?: number);
+      onload: (() => void) | null;
+      onerror: ((message: string) => void) | null;
+      onprogress: ((duration: number, parsedSize: number) => void) | null;
+      onplay: (() => void) | null;
+      onpause: (() => void) | null;
+      onseek:
+        | ((position: number, current: number, total: number) => void)
+        | null;
+      getDisplay(): Display;
+      getPosition(): number;
+      getDuration(): number;
+      isPlaying(): boolean;
+      play(): void;
+      pause(): void;
+      seek(position: number, callback?: () => void): void;
+      abort(): void;
+    }
+
     class Mouse {
       constructor(element: HTMLElement);
       onmousedown: ((state: Mouse.State) => void) | null;
@@ -76,6 +96,39 @@ declare module "guacamole-common-js" {
         right: boolean;
         up: boolean;
         down: boolean;
+      }
+
+      interface MouseEvent {
+        state: Mouse.State;
+        preventDefault(): void;
+        stopPropagation(): void;
+      }
+
+      class Touchpad {
+        constructor(element: HTMLElement);
+        currentState: Mouse.State;
+        clickTimingThreshold: number;
+        clickMoveThreshold: number;
+        scrollThreshold: number;
+        onEach(
+          types: string[],
+          listener: (event: Mouse.MouseEvent) => void,
+        ): void;
+        on(type: string, listener: (event: Mouse.MouseEvent) => void): void;
+      }
+
+      class Touchscreen {
+        constructor(element: HTMLElement);
+        currentState: Mouse.State;
+        clickTimingThreshold: number;
+        clickMoveThreshold: number;
+        scrollThreshold: number;
+        longPressThreshold: number;
+        onEach(
+          types: string[],
+          listener: (event: Mouse.MouseEvent) => void,
+        ): void;
+        on(type: string, listener: (event: Mouse.MouseEvent) => void): void;
       }
     }
 

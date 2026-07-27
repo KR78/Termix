@@ -1,81 +1,73 @@
 <!-- SUMMARY -->
 
-Major new features including serial connections, Tailscale/WireGuard support, HashiCorp Vault SSH auth, Bitwarden SSH agent, WebAuthn passkeys, Podman support, a new grid-based dashboard, host metrics history with alerting, and much more.
+Standalone-first Electron desktop app with optional remote sync, shared/multiplayer terminal and remote desktop sessions, improved SSH MFA support, custom key shortcuts, bug fixes across terminal, RDP/VNC, mobile, and auth.
 
 <!-- /SUMMARY -->
 
 <!-- YOUTUBE -->
 
-https://youtu.be/c3UD4q2jW_8
+https://youtu.be/g0QjNdV3YYY
 
 <!-- /YOUTUBE -->
 
 <!-- UPDATE_LOG -->
 
-- Termix ID with a public handle, hosted public key resolver, and built-in CA for issuing SSH certificates
-- Serial connections support
-- Tailscale and WireGuard VPN host integration with status detection
-- HashiCorp Vault SSH signer authentication
-- Bitwarden SSH agent integration
-- WebAuthn passkey authentication
-- Podman container runtime support alongside Docker
-- SSH agent forwarding support across all SSH features
-- New grid and widget-based dashboard homepage
-- Grafana-style server stats history graphs
-- Alert system with ntfy and webhook notification support
-- Host temperature metrics card
-- App fullscreen mode
-- External editor support for file manager (desktop app)
-- Safe host sharing export
-- SSH credential password fallback for key-based auth
-- Open all sessions in a folder at once
-- Custom terminal theme color support
-- Custom tunnel endpoints configuration
-- GUACD_URL environment variable support
-- App rail hover expansion setting
-- Terminal font zoom with mouse wheel
-- File manager terminals promoted to full tabs
-- Donate button on dashboard
-- PuTTY PPK SSH key support
-- Confirmation dialog when closing active host connections
-- Confirmation prompt before opening large files in the editor
-- Cross-host file manager clipboard
-- Prioritize host results in command palette search
-- Retry autostart tunnel host fetches on failure
+- Added simple telemetrics to PostHog (user count, total hosts across users, and version metrics).
+- Reworked Electron desktop app to run standalone-first with a now optional sync to a remote Termix server.
+- Added support for starting connections locally or from the remote server on desktop app.
+- Added support for custom key shortcuts.
+- Added support for more MFA types (SSH-only).
+- Added multiplayer/shared sessions for terminals and remote desktop (share via link or user).
+- Added support for logging into SSH hosts that require multi-factor authentication (like Duo or JumpCloud push/TOTP prompts).
+- Added the option to convert a Quick Connect session into a saved host after connecting.
+- Added an export option for sharing host entries without credentials, so a host list can be shared without leaking passwords or keys.
+- Unified the folder picker across hosts, credentials, and snippets so they all use the same searchable, create-in-place selector.
+- Allowed pasting into the key recording field from the clipboard.
+- Allowed sharing hosts that use authentication type "none".
+- Allowed setting authentication type "none" on RDP hosts.
+- Added the option to show two or more sidebar panels open at the same time.
+- Added global custom themes that can be applied across all hosts instead of per host.
+- Added a button to quickly create a Credentials entry from a host's existing authentication details.
+- Added persistent split screen, so your layout and assigned tabs are restored after closing and reopening the app.
+- Added tag matching to host search, so searching now matches tags as well as hostnames.
+- Brought back the ability to collapse snippets.
+- Added the ability to assign login credentials to an entire folder of hosts instead of one at a time.
+- Added the ability to share terminal, VNC, and RDP sessions with other users, including read-only and read-write modes.
+- Added the ability to share entire folders of hosts with other users instead of sharing hosts one by one.
+- Added the ability to make folders of hosts available to specific users instead of everyone recreating them.
+- Reworked SSH credentials to support both a password and an SSH key on the same credential, with an option to auto fill the password when prompted.
+- Added a custom group claim option for OIDC login, useful for identity providers like Zitadel that don't use a plain "groups" claim.
 <!-- /UPDATE_LOG -->
 
 <!-- BUG_FIXES -->
 
-- SSH port connection bug
-- VNC required argument handshake failure
-- Jump host SOCKS5 proxy selection using wrong proxy
-- Tunnel endpoint resolution failing in some configurations
-- Direct tunnel skipping endpoint credential validation incorrectly
-- Dashboard host routing ignoring protocol settings
-- Dashboard service link creation broken
-- File manager uploads failing with 400 error and missing schema migrations on upgrade
-- Large file manager uploads not chunked (chunked for files >=1.5GB)
-- File uploads over 100MB failing due to ArrayBuffer browser limit
-- File path case not preserved in file manager UI
-- File downloads unreliable in the desktop app
-- Tmux detection path handling incorrect
-- Host metrics startup polling incorrect
-- TUI terminal output highlighting incorrect
-- Runtime base path for auth callbacks incorrect
-- Windows app icon unstable
-- SSH heading syntax highlighting broken
-- Terminal link dialog layering issue
-- Electron OIDC browser authentication failures
-- Proxmox import auth fallback not working
-- OIDC role credential shares not synced for OIDC users
-- RDP connections requiring credentials when none are needed
-- VNC authentication settings not persisted
-- Guacamole unicode token corruption
-- Guacamole websocket base path incorrect
-- Guacamole disconnect during startup crash
-- Host metrics starting for non-SSH hosts
-- Sidebar host hover causing layout shift
-- Alert UI incorrectly applying Termix CSS and alert system failing to load
-- Translation key incorrect for nav close action
-- PUID HTML ownership in Docker entrypoint
+- Fixed the Add Channel dialog failing with "config is required" when adding Webhook or ntfy alert channels.
+- Fixed font size and UI scaling being too small even at the largest setting on high resolution displays.
+- Fixed the Docker integration not working on hosts using authentication type "none".
+- Fixed the latest Russian translation updates from Crowdin not being included in the app.
+- Fixed missing Nerd Font symbol support in the Android app.
+- Fixed credential changes on RDP hosts not saving properly.
+- Fixed credential folders not showing up in the folder dropdown when editing a credential.
+- Fixed RDP hosts not using their stored credential and falling back to a direct connection.
+- Fixed Cmd + scroll on Mac resizing the terminal instead of scrolling.
+- Fixed text repeating itself in the terminal when typing with a wireless keyboard on Android.
+- Fixed RDP connections failing when going through a jump host.
+- Fixed SSH connections failing when going through a jump host in some setups.
+- Fixed OIDC login failing with a database error when the identity provider didn't return a client ID.
+- Fixed SSH client-to-server tunnels failing with an authentication error.
+- Fixed Host Metrics disk usage only showing the root filesystem and ignoring other mounted disks.
+- Fixed Android navigation buttons covering the terminal's top bar keys.
+- Fixed Proxmox discovery importing DHCP LXC containers with an IP of 0.0.0.0 instead of their real address.
+- Fixed VNC connections to macOS Screen Sharing hanging after the handshake instead of connecting.
+- Fixed File Manager delete still failing on Windows hosts running PowerShell 5.1.
+- Fixed the terminal dropping characters while typing on iOS.
+- Fixed SSH lines like "[username@host]" being wrongly highlighted as a log level and breaking output formatting.
+- Fixed RDP touch mode on Android not registering taps as clicks.
+- Fixed VNC connections still failing due to a guacd protocol version mismatch.
+- Guacamole tab showing "connecting" instead of rendering the desktop.
+- Fixed tmux not using Tailscale when starting connections.
+- Fixed an invalid websocket frame from causing code 10006 crash triggering restart loop.
+- Remove chacha20-poly1305 without native ssh2 binding.
+- Corrected SSRF blocklist from false-positive on all IPv4.
+- Fixed terminal background image incorrectly displaying.
 <!-- /BUG_FIXES -->

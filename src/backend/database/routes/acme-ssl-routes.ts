@@ -1,13 +1,15 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import type { AuthenticatedRequest } from "../../../types/index.js";
 import type { RequestHandler, Router } from "express";
-import { eq } from "drizzle-orm";
 import { authLogger } from "../../utils/logger.js";
-import { db } from "../db/index.js";
-import { users } from "../db/schema.js";
 import { logAudit, getRequestMeta } from "../../utils/audit-logger.js";
+import {
+  createCurrentSettingsRepository,
+  createCurrentUserRepository,
+} from "../repositories/factory.js";
+import type { UserRecord } from "../repositories/user-repository.js";
 
 const DATA_DIR = process.env.DATA_DIR || "./db/data";
 const SSL_DIR = path.join(DATA_DIR, "ssl");
@@ -26,12 +28,20 @@ export type AcmeSettings = {
   enabled: boolean;
   domain: string;
   email: string;
-  challengeType: "http-webroot" | "dns-cloudflare";
+  challengeType: "http-webroot" | "dns-cloudflare" | "manual";
   cloudflareToken: string;
   lastIssuedAt: string | null;
   certStatus: "none" | "valid" | "expiring" | "expired";
   certExpiresAt: string | null;
 };
+
+async function getAdminActor(
+  userId: string | undefined,
+): Promise<UserRecord | null> {
+  if (!userId) return null;
+  const user = await createCurrentUserRepository().findById(userId);
+  return user?.isAdmin ? user : null;
+}
 
 function getCertInfo(): {
   status: "none" | "valid" | "expiring" | "expired";
@@ -39,7 +49,7 @@ function getCertInfo(): {
 } {
   const certFile = path.join(SSL_DIR, "termix.crt");
   try {
-    execSync(`openssl x509 -in "${certFile}" -noout 2>/dev/null`, {
+    execFileSync("openssl", ["x509", "-in", certFile, "-noout"], {
       stdio: "pipe",
     });
   } catch {
@@ -47,8 +57,9 @@ function getCertInfo(): {
   }
 
   try {
-    const endDateRaw = execSync(
-      `openssl x509 -in "${certFile}" -noout -enddate`,
+    const endDateRaw = execFileSync(
+      "openssl",
+      ["x509", "-in", certFile, "-noout", "-enddate"],
       { stdio: "pipe" },
     )
       .toString()
@@ -57,17 +68,25 @@ function getCertInfo(): {
     const expiresAt = new Date(endDateRaw).toISOString();
 
     try {
-      execSync(`openssl x509 -in "${certFile}" -checkend 0 -noout`, {
-        stdio: "pipe",
-      });
+      execFileSync(
+        "openssl",
+        ["x509", "-in", certFile, "-checkend", "0", "-noout"],
+        {
+          stdio: "pipe",
+        },
+      );
     } catch {
       return { status: "expired", expiresAt };
     }
 
     try {
-      execSync(`openssl x509 -in "${certFile}" -checkend 2592000 -noout`, {
-        stdio: "pipe",
-      });
+      execFileSync(
+        "openssl",
+        ["x509", "-in", certFile, "-checkend", "2592000", "-noout"],
+        {
+          stdio: "pipe",
+        },
+      );
       return { status: "valid", expiresAt };
     } catch {
       return { status: "expiring", expiresAt };
@@ -77,13 +96,11 @@ function getCertInfo(): {
   }
 }
 
-function getAcmeSettingsFromDb(): AcmeSettings {
-  const row = db.$client
-    .prepare("SELECT value FROM settings WHERE key = 'acme_ssl_settings'")
-    .get() as { value: string } | undefined;
-
+async function getAcmeSettings(): Promise<AcmeSettings> {
   const { status, expiresAt } = getCertInfo();
-  const stored = row ? JSON.parse(row.value) : {};
+  const value =
+    await createCurrentSettingsRepository().get("acme_ssl_settings");
+  const stored = value ? JSON.parse(value) : {};
 
   return {
     enabled: stored.enabled ?? false,
@@ -119,7 +136,7 @@ export function registerAcmeSSLRoutes(
    */
   router.get("/acme-ssl-settings", authenticateJWT, async (_req, res) => {
     try {
-      res.json(getAcmeSettingsFromDb());
+      res.json(await getAcmeSettings());
     } catch (err) {
       authLogger.error("Failed to get ACME SSL settings", err);
       res.status(500).json({ error: "Failed to get ACME SSL settings" });
@@ -149,7 +166,7 @@ export function registerAcmeSSLRoutes(
    *                 type: string
    *               challengeType:
    *                 type: string
-   *                 enum: [http-webroot, dns-cloudflare]
+   *                 enum: [http-webroot, dns-cloudflare, manual]
    *               cloudflareToken:
    *                 type: string
    *     responses:
@@ -163,15 +180,14 @@ export function registerAcmeSSLRoutes(
   router.patch("/acme-ssl-settings", authenticateJWT, async (req, res) => {
     const userId = (req as AuthenticatedRequest).userId;
     try {
-      const user = await db.select().from(users).where(eq(users.id, userId));
-      if (!user || user.length === 0 || !user[0].isAdmin) {
+      const actor = await getAdminActor(userId);
+      if (!actor) {
         return res.status(403).json({ error: "Not authorized" });
       }
 
-      const existing = db.$client
-        .prepare("SELECT value FROM settings WHERE key = 'acme_ssl_settings'")
-        .get() as { value: string } | undefined;
-      const current = existing ? JSON.parse(existing.value) : {};
+      const settingsRepository = createCurrentSettingsRepository();
+      const existing = await settingsRepository.get("acme_ssl_settings");
+      const current = existing ? JSON.parse(existing) : {};
 
       const { enabled, domain, email, challengeType, cloudflareToken } =
         req.body;
@@ -187,21 +203,15 @@ export function registerAcmeSSLRoutes(
           !cloudflareToken.includes("*") && { cloudflareToken }),
       };
 
-      db.$client
-        .prepare(
-          "INSERT OR REPLACE INTO settings (key, value) VALUES ('acme_ssl_settings', ?)",
-        )
-        .run(JSON.stringify(updated));
+      await settingsRepository.set(
+        "acme_ssl_settings",
+        JSON.stringify(updated),
+      );
 
       const { ipAddress, userAgent } = getRequestMeta(req);
-      const actorRecord = await db
-        .select({ username: users.username })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
       await logAudit({
         userId,
-        username: actorRecord[0]?.username ?? userId,
+        username: actor.username ?? userId,
         action: "update_acme_ssl_settings",
         resourceType: "setting",
         details: JSON.stringify({
@@ -216,7 +226,7 @@ export function registerAcmeSSLRoutes(
         success: true,
       });
 
-      res.json(getAcmeSettingsFromDb());
+      res.json(await getAcmeSettings());
     } catch (err) {
       authLogger.error("Failed to update ACME SSL settings", err);
       res.status(500).json({ error: "Failed to update ACME SSL settings" });
@@ -243,21 +253,20 @@ export function registerAcmeSSLRoutes(
    */
   router.post("/acme-ssl-request", authenticateJWT, async (req, res) => {
     const userId = (req as AuthenticatedRequest).userId;
+    const actor = await getAdminActor(userId);
     try {
-      const user = await db.select().from(users).where(eq(users.id, userId));
-      if (!user || user.length === 0 || !user[0].isAdmin) {
+      if (!actor) {
         return res.status(403).json({ error: "Not authorized" });
       }
 
-      const row = db.$client
-        .prepare("SELECT value FROM settings WHERE key = 'acme_ssl_settings'")
-        .get() as { value: string } | undefined;
+      const settingsValue =
+        await createCurrentSettingsRepository().get("acme_ssl_settings");
 
-      if (!row) {
+      if (!settingsValue) {
         return res.status(400).json({ error: "ACME settings not configured" });
       }
 
-      const settings = JSON.parse(row.value);
+      const settings = JSON.parse(settingsValue);
       const { domain, email, challengeType, cloudflareToken } = settings;
 
       if (!domain || !email) {
@@ -265,7 +274,7 @@ export function registerAcmeSSLRoutes(
       }
 
       try {
-        execSync("certbot --version", { stdio: "pipe" });
+        execFileSync("certbot", ["--version"], { stdio: "pipe" });
       } catch {
         return res
           .status(500)
@@ -278,13 +287,16 @@ export function registerAcmeSSLRoutes(
       await fs.mkdir(CERTBOT_WORK_DIR, { recursive: true });
       await fs.mkdir(CERTBOT_LOGS_DIR, { recursive: true });
 
-      const certbotDirFlags = [
-        `--config-dir "${CERTBOT_CONFIG_DIR}"`,
-        `--work-dir "${CERTBOT_WORK_DIR}"`,
-        `--logs-dir "${CERTBOT_LOGS_DIR}"`,
-      ].join(" ");
+      const certbotDirArgs = [
+        "--config-dir",
+        CERTBOT_CONFIG_DIR,
+        "--work-dir",
+        CERTBOT_WORK_DIR,
+        "--logs-dir",
+        CERTBOT_LOGS_DIR,
+      ];
 
-      let certbotCmd: string;
+      let certbotArgs: string[];
 
       if (challengeType === "dns-cloudflare") {
         if (!cloudflareToken) {
@@ -302,40 +314,39 @@ export function registerAcmeSSLRoutes(
           { mode: 0o600 },
         );
 
-        certbotCmd = [
-          "certbot",
+        certbotArgs = [
           "certonly",
           "--non-interactive",
           "--agree-tos",
           "--dns-cloudflare",
-          `--dns-cloudflare-credentials "${CLOUDFLARE_CREDENTIALS_FILE}"`,
+          "--dns-cloudflare-credentials",
+          CLOUDFLARE_CREDENTIALS_FILE,
           "--dns-cloudflare-propagation-seconds",
           "30",
           "-d",
-          `"${domain}"`,
+          domain,
           "--email",
-          `"${email}"`,
+          email,
           "--cert-name",
           "termix",
-          certbotDirFlags,
-        ].join(" ");
+          ...certbotDirArgs,
+        ];
       } else {
-        certbotCmd = [
-          "certbot",
+        certbotArgs = [
           "certonly",
           "--non-interactive",
           "--agree-tos",
           "--webroot",
           "-w",
-          `"${ACME_WEBROOT}"`,
+          ACME_WEBROOT,
           "-d",
-          `"${domain}"`,
+          domain,
           "--email",
-          `"${email}"`,
+          email,
           "--cert-name",
           "termix",
-          certbotDirFlags,
-        ].join(" ");
+          ...certbotDirArgs,
+        ];
       }
 
       authLogger.info("Requesting Let's Encrypt certificate", {
@@ -344,7 +355,10 @@ export function registerAcmeSSLRoutes(
         operation: "acme_cert_request",
       });
 
-      execSync(certbotCmd, { stdio: "pipe", timeout: 120000 });
+      execFileSync("certbot", certbotArgs, {
+        stdio: "pipe",
+        timeout: 120000,
+      });
 
       const liveDir = path.join(CERTBOT_CONFIG_DIR, "live", "termix");
       const fullchainSrc = path.join(liveDir, "fullchain.pem");
@@ -358,11 +372,10 @@ export function registerAcmeSSLRoutes(
       await fs.chmod(certDest, 0o644);
 
       const updated = { ...settings, lastIssuedAt: new Date().toISOString() };
-      db.$client
-        .prepare(
-          "INSERT OR REPLACE INTO settings (key, value) VALUES ('acme_ssl_settings', ?)",
-        )
-        .run(JSON.stringify(updated));
+      await createCurrentSettingsRepository().set(
+        "acme_ssl_settings",
+        JSON.stringify(updated),
+      );
 
       authLogger.info("Let's Encrypt certificate issued and installed", {
         domain,
@@ -370,14 +383,9 @@ export function registerAcmeSSLRoutes(
       });
 
       const { ipAddress, userAgent } = getRequestMeta(req);
-      const actorRecord = await db
-        .select({ username: users.username })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
       await logAudit({
         userId,
-        username: actorRecord[0]?.username ?? userId,
+        username: actor.username ?? userId,
         action: "acme_ssl_request",
         resourceType: "setting",
         details: JSON.stringify({ domain, challengeType, success: true }),
@@ -386,20 +394,15 @@ export function registerAcmeSSLRoutes(
         success: true,
       });
 
-      res.json({ success: true, ...getAcmeSettingsFromDb() });
+      res.json({ success: true, ...(await getAcmeSettings()) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       authLogger.error("ACME certificate request failed", err);
 
       const { ipAddress, userAgent } = getRequestMeta(req);
-      const actorRecord = await db
-        .select({ username: users.username })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
       await logAudit({
         userId,
-        username: actorRecord[0]?.username ?? userId,
+        username: actor?.username ?? userId,
         action: "acme_ssl_request",
         resourceType: "setting",
         details: JSON.stringify({ error: message }),
@@ -409,6 +412,161 @@ export function registerAcmeSSLRoutes(
       });
 
       res.status(500).json({ error: `Certificate request failed: ${message}` });
+    }
+  });
+
+  /**
+   * @openapi
+   * /users/manual-ssl-upload:
+   *   post:
+   *     summary: Upload a manual/custom SSL certificate and key (admin only)
+   *     description: Validates and installs a user-supplied PEM certificate and private key as the active Termix SSL certificate.
+   *     tags:
+   *       - Users
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               certificate:
+   *                 type: string
+   *               privateKey:
+   *                 type: string
+   *     responses:
+   *       200:
+   *         description: Certificate uploaded and installed successfully.
+   *       400:
+   *         description: Invalid or missing certificate/key.
+   *       403:
+   *         description: Not authorized.
+   *       500:
+   *         description: Certificate installation failed.
+   */
+  router.post("/manual-ssl-upload", authenticateJWT, async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const actor = await getAdminActor(userId);
+    try {
+      if (!actor) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const { certificate, privateKey } = req.body;
+
+      if (
+        typeof certificate !== "string" ||
+        typeof privateKey !== "string" ||
+        !certificate.includes("BEGIN CERTIFICATE") ||
+        !privateKey.includes("PRIVATE KEY")
+      ) {
+        return res.status(400).json({
+          error: "A valid PEM certificate and private key are required",
+        });
+      }
+
+      await fs.mkdir(SSL_DIR, { recursive: true });
+
+      const tmpCertFile = path.join(SSL_DIR, ".manual-upload.crt.tmp");
+      const tmpKeyFile = path.join(SSL_DIR, ".manual-upload.key.tmp");
+
+      try {
+        await fs.writeFile(tmpCertFile, certificate, { mode: 0o644 });
+        await fs.writeFile(tmpKeyFile, privateKey, { mode: 0o600 });
+
+        try {
+          execFileSync("openssl", ["x509", "-in", tmpCertFile, "-noout"], {
+            stdio: "pipe",
+          });
+          execFileSync(
+            "openssl",
+            ["pkey", "-in", tmpKeyFile, "-noout", "-check"],
+            { stdio: "pipe" },
+          );
+        } catch {
+          return res.status(400).json({
+            error:
+              "The provided certificate or private key is not valid PEM data",
+          });
+        }
+
+        const certPubkey = execFileSync(
+          "openssl",
+          ["x509", "-in", tmpCertFile, "-noout", "-pubkey"],
+          { stdio: "pipe" },
+        );
+        const keyPubkey = execFileSync(
+          "openssl",
+          ["pkey", "-in", tmpKeyFile, "-pubout"],
+          { stdio: "pipe" },
+        );
+
+        if (!certPubkey.equals(keyPubkey)) {
+          return res
+            .status(400)
+            .json({ error: "The certificate and private key do not match" });
+        }
+
+        const certDest = path.join(SSL_DIR, "termix.crt");
+        const keyDest = path.join(SSL_DIR, "termix.key");
+        await fs.rename(tmpCertFile, certDest);
+        await fs.rename(tmpKeyFile, keyDest);
+        await fs.chmod(keyDest, 0o600);
+        await fs.chmod(certDest, 0o644);
+      } finally {
+        await fs.rm(tmpCertFile, { force: true });
+        await fs.rm(tmpKeyFile, { force: true });
+      }
+
+      const settingsRepository = createCurrentSettingsRepository();
+      const existing = await settingsRepository.get("acme_ssl_settings");
+      const current = existing ? JSON.parse(existing) : {};
+      const updated = {
+        ...current,
+        challengeType: "manual",
+        lastIssuedAt: new Date().toISOString(),
+      };
+      await settingsRepository.set(
+        "acme_ssl_settings",
+        JSON.stringify(updated),
+      );
+
+      authLogger.info("Manual SSL certificate installed", {
+        operation: "manual_ssl_installed",
+      });
+
+      const { ipAddress, userAgent } = getRequestMeta(req);
+      await logAudit({
+        userId,
+        username: actor.username ?? userId,
+        action: "manual_ssl_upload",
+        resourceType: "setting",
+        details: JSON.stringify({ success: true }),
+        ipAddress,
+        userAgent,
+        success: true,
+      });
+
+      res.json({ success: true, ...(await getAcmeSettings()) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      authLogger.error("Manual SSL certificate upload failed", err);
+
+      const { ipAddress, userAgent } = getRequestMeta(req);
+      await logAudit({
+        userId,
+        username: actor?.username ?? userId,
+        action: "manual_ssl_upload",
+        resourceType: "setting",
+        details: JSON.stringify({ error: message }),
+        ipAddress,
+        userAgent,
+        success: false,
+      });
+
+      res
+        .status(500)
+        .json({ error: `Certificate installation failed: ${message}` });
     }
   });
 }

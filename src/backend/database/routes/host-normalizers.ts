@@ -225,10 +225,83 @@ export function stripSensitiveFields(
   result.hasKeyPassword = !!host.keyPassword;
   result.hasPassword = !!host.password;
   result.hasSudoPassword = !!host.sudoPassword;
+  result.hasRdpPassword = !!host.rdpPassword;
+  result.hasVncPassword = !!host.vncPassword;
+  result.hasTelnetPassword = !!host.telnetPassword;
   for (const field of SENSITIVE_FIELDS) {
     delete result[field];
   }
   return result;
+}
+
+// Connection essentials a connect-level recipient is allowed to see.
+const CONNECT_LEVEL_FIELDS = new Set([
+  "id",
+  "userId",
+  "ownerId",
+  "ownerUsername",
+  "isShared",
+  "permissionLevel",
+  "sharedExpiresAt",
+  "name",
+  "ip",
+  "port",
+  "username",
+  "folder",
+  "tags",
+  "pin",
+  "authType",
+  "connectionType",
+  "credentialId",
+  "enableTerminal",
+  "enableTunnel",
+  "enableFileManager",
+  "enableDocker",
+  "enableProxmox",
+  "enableTmuxMonitor",
+  "showTerminalInSidebar",
+  "showFileManagerInSidebar",
+  "showTunnelInSidebar",
+  "showDockerInSidebar",
+  "showServerStatsInSidebar",
+  "enableSsh",
+  "enableRdp",
+  "enableVnc",
+  "enableTelnet",
+  "sshPort",
+  "rdpPort",
+  "vncPort",
+  "telnetPort",
+  "defaultPath",
+  "scpLegacy",
+  "tunnelConnections",
+  "jumpHosts",
+  "createdAt",
+  "updatedAt",
+]);
+
+/**
+ * Shapes a shared host row for its recipient. Secrets are always stripped
+ * (all levels); connect-level recipients are additionally reduced to
+ * connection essentials since they may not view the host's configuration.
+ */
+export function sanitizeHostForRecipient(
+  host: Record<string, unknown>,
+  permissionLevel: string | undefined,
+): Record<string, unknown> {
+  const stripped = stripSensitiveFields(host);
+
+  if (permissionLevel !== "connect") {
+    return stripped;
+  }
+
+  const reduced: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(stripped)) {
+    if (CONNECT_LEVEL_FIELDS.has(key)) {
+      reduced[key] = value;
+    }
+  }
+  return reduced;
 }
 
 export function transformHostResponse(

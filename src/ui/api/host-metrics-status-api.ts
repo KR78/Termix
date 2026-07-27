@@ -1,6 +1,30 @@
 import axios, { type AxiosRequestConfig } from "axios";
-import { handleApiError, statsApi } from "@/main-axios";
+import {
+  handleApiError,
+  statsApi,
+  getRemoteStatsApi,
+  isElectron,
+} from "@/main-axios";
 import type { ServerMetrics, ServerStatus } from "@/main-axios";
+import { getCachedServerStatuses } from "@/lib/hosts-request-cache";
+
+// Metrics collection/viewer registration below (startMetricsPolling,
+// registerMetricsViewer, etc.) is NOT origin-routed: the backend that
+// receives the call must own the target host by numeric database id, and a
+// synced host has a different numeric id in each database (only its
+// syncId matches across them). Only the aggregate status read is merged
+// across local + remote, same as tunnel status.
+async function isRemoteSyncConnected(): Promise<boolean> {
+  if (!isElectron()) return false;
+  try {
+    const config = (await window.electronAPI?.invoke?.(
+      "get-remote-sync-config",
+    )) as { serverUrl?: string } | null;
+    return !!config?.serverUrl;
+  } catch {
+    return false;
+  }
+}
 
 type ApiConnectionLog = {
   type: "info" | "success" | "warning" | "error";
@@ -73,34 +97,56 @@ function isTransientStatusError(error: unknown): boolean {
 export async function getAllServerStatuses(): Promise<
   Record<number, ServerStatus>
 > {
-  let lastError: unknown = null;
+  return getCachedServerStatuses(async () => {
+    let lastError: unknown = null;
+    let localStatuses: Record<number, ServerStatus> = {};
 
-  for (let i = 0; i < STATUS_RETRY_SCHEDULE.length; i++) {
-    const { timeoutMs, pauseAfterMs } = STATUS_RETRY_SCHEDULE[i];
-    const isFinalAttempt = i === STATUS_RETRY_SCHEDULE.length - 1;
+    for (let i = 0; i < STATUS_RETRY_SCHEDULE.length; i++) {
+      const { timeoutMs, pauseAfterMs } = STATUS_RETRY_SCHEDULE[i];
+      const isFinalAttempt = i === STATUS_RETRY_SCHEDULE.length - 1;
 
-    try {
-      const response = await statsApi.get("/status", {
-        timeout: timeoutMs,
-        // Silence per-attempt interceptor logging & health-monitor side
-        // effects on all attempts except the final one, so background
-        // blips don't look like real outages.
-        __silentRetry: !isFinalAttempt,
-      } as AxiosRequestConfig & { __silentRetry?: boolean });
-      return response.data || {};
-    } catch (error) {
-      lastError = error;
-      if (!isTransientStatusError(error)) {
+      try {
+        const response = await statsApi.get("/status", {
+          timeout: timeoutMs,
+          // Silence per-attempt interceptor logging & health-monitor side
+          // effects on all attempts except the final one, so background
+          // blips don't look like real outages.
+          __silentRetry: !isFinalAttempt,
+        } as AxiosRequestConfig & { __silentRetry?: boolean });
+        localStatuses = response.data || {};
+        lastError = null;
         break;
+      } catch (error) {
+        lastError = error;
+        if (!isTransientStatusError(error)) {
+          break;
+        }
+        if (pauseAfterMs === null) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pauseAfterMs));
       }
-      if (pauseAfterMs === null) {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, pauseAfterMs));
     }
-  }
 
-  handleApiError(lastError, "fetch server statuses");
+    if (lastError) {
+      handleApiError(lastError, "fetch server statuses");
+      return {};
+    }
+
+    if (await isRemoteSyncConnected()) {
+      try {
+        const remoteResult = await getRemoteStatsApi().get("/status", {
+          timeout: 8000,
+          __silentRetry: true,
+        } as AxiosRequestConfig & { __silentRetry?: boolean });
+        return { ...localStatuses, ...(remoteResult.data || {}) };
+      } catch {
+        // remote unreachable this tick -- fall back to local-only statuses
+      }
+    }
+
+    return localStatuses;
+  });
 }
 
 export async function getServerStatusById(id: number): Promise<ServerStatus> {

@@ -18,6 +18,8 @@ import {
   Pencil,
   Maximize2,
   Minimize2,
+  FolderOpen,
+  Share2,
 } from "lucide-react";
 import { tabIcon } from "@/shell/tabUtils";
 import { isElectron } from "@/lib/electron";
@@ -40,6 +42,8 @@ export function TabBar({
   onAddToSplit,
   onRemoveFromSplit,
   onRenameTab,
+  onOpenFileManager,
+  onOpenShare,
   isAppFullscreen,
   onToggleAppFullscreen,
 }: {
@@ -56,6 +60,8 @@ export function TabBar({
   onAddToSplit: (tabId: string) => void;
   onRemoveFromSplit: (tabId: string) => void;
   onRenameTab?: (tabId: string, newLabel: string) => void;
+  onOpenFileManager?: (tabId: string) => void;
+  onOpenShare?: (tabId: string) => void;
   isAppFullscreen: boolean;
   onToggleAppFullscreen: () => void;
 }) {
@@ -349,6 +355,19 @@ export function TabBar({
                         <RefreshCw className="size-3" />
                       </button>
                     )}
+                    {CONNECTION_TAB_TYPES.includes(tab.type) && onOpenShare && (
+                      <button
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenShare(tab.id);
+                        }}
+                        title={t("sessionSharing.shareButton")}
+                        className="flex items-center justify-center size-5 md:size-4 rounded-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-muted"
+                      >
+                        <Share2 className="size-3" />
+                      </button>
+                    )}
                     <button
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
@@ -527,6 +546,20 @@ export function TabBar({
                   {t("nav.refreshTab")}
                 </button>
               )}
+              {ctxTab.type === "terminal" &&
+                ctxTab.host &&
+                onOpenFileManager && (
+                  <button
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => {
+                      onOpenFileManager(contextTabId);
+                      setContextTabId(null);
+                    }}
+                  >
+                    <FolderOpen className="size-3" />
+                    {t("nav.openFileManager")}
+                  </button>
+                )}
               <button
                 className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left hover:bg-accent hover:text-accent-foreground"
                 onClick={() => {

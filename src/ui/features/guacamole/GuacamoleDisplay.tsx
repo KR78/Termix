@@ -8,10 +8,20 @@ import {
 } from "react";
 import Guacamole from "guacamole-common-js";
 import { useTranslation } from "react-i18next";
-import { getGuacamoleToken, isElectron, isEmbeddedMode } from "@/main-axios.ts";
+import { getGuacamoleToken, isElectron } from "@/main-axios.ts";
 import { SimpleLoader } from "@/lib/SimpleLoader.tsx";
 import { getBasePath } from "@/lib/base-path.ts";
 import { buildGuacamoleWebSocketBaseUrl } from "./guacamole-websocket-url.ts";
+import {
+  resolveConnectionOrigin,
+  buildOriginWsUrl,
+} from "@/lib/connection-origin.ts";
+import {
+  isFirefoxBrowser,
+  isPasteShortcut,
+  pasteTextToRemote,
+} from "./guacamole-clipboard.ts";
+import { getGuacamoleDisplaySize } from "./guacamole-display-size.ts";
 
 export type GuacamoleConnectionType = "rdp" | "vnc" | "telnet";
 
@@ -38,9 +48,12 @@ export interface GuacamoleDisplayHandle {
   setClipboard: (data: string) => void;
 }
 
+export type GuacamoleTouchMode = "touchscreen" | "touchpad";
+
 interface GuacamoleDisplayProps {
   connectionConfig: GuacamoleConnectionConfig;
   isVisible: boolean;
+  touchMode?: GuacamoleTouchMode | null;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: string) => void;
@@ -52,7 +65,7 @@ export const GuacamoleDisplay = forwardRef<
   GuacamoleDisplayHandle,
   GuacamoleDisplayProps
 >(function GuacamoleDisplay(
-  { connectionConfig, isVisible, onConnect, onDisconnect, onError },
+  { connectionConfig, isVisible, touchMode, onConnect, onDisconnect, onError },
   ref,
 ) {
   const { t } = useTranslation();
@@ -117,20 +130,21 @@ export const GuacamoleDisplay = forwardRef<
     },
   }));
 
-  const getWebSocketUrl = useCallback(
+  const getWebSocketConnection = useCallback(
     async (
       containerWidth: number,
       containerHeight: number,
-    ): Promise<string | null> => {
+    ): Promise<{ url: string; query: string } | null> => {
       try {
         let token: string;
-        const protocol = connectionConfig.protocol ?? connectionConfig.type;
+        const connectionProtocol =
+          connectionConfig.protocol ?? connectionConfig.type;
 
         if (connectionConfig.token) {
           token = connectionConfig.token;
         } else {
           const data = await getGuacamoleToken({
-            protocol: protocol ?? "rdp",
+            protocol: connectionProtocol ?? "rdp",
             hostname: String(connectionConfig.hostname ?? ""),
             port: connectionConfig.port,
             username: connectionConfig.username,
@@ -151,25 +165,47 @@ export const GuacamoleDisplay = forwardRef<
           token = data.token;
         }
 
-        const width = connectionConfig.width ?? containerWidth ?? 1280;
-        const height = connectionConfig.height ?? containerHeight ?? 720;
+        const displaySize = getGuacamoleDisplaySize(
+          connectionConfig.width ?? containerWidth ?? 1280,
+          connectionConfig.height ?? containerHeight ?? 720,
+          connectionProtocol,
+          window.devicePixelRatio,
+          connectionConfig.dpi,
+        );
 
-        const wsBase = buildGuacamoleWebSocketBaseUrl({
-          isDev,
-          isElectronApp: isElectron(),
-          isEmbeddedApp: isEmbeddedMode(),
-          configuredServerUrl: (window as { configuredServerUrl?: string })
-            .configuredServerUrl,
-          basePath: getBasePath(),
-          location: window.location,
-        });
+        let wsBase: string | null;
+        if (isElectron()) {
+          const origin = await resolveConnectionOrigin({
+            connectionType: connectionProtocol,
+          });
+          wsBase = await buildOriginWsUrl({
+            origin,
+            localPort: 30008,
+            localPath: "/guacamole/websocket/",
+            remotePath: "/guacamole/websocket/",
+            includeLocalJwt: false,
+          });
+          if (!wsBase) {
+            onError?.(t("errors.remoteServerRequired"));
+            return null;
+          }
+        } else {
+          wsBase = buildGuacamoleWebSocketBaseUrl({
+            isDev,
+            isElectronApp: false,
+            isEmbeddedApp: false,
+            basePath: getBasePath(),
+            location: window.location,
+          });
+        }
 
         const params = new URLSearchParams({
           token,
-          width: String(width),
-          height: String(height),
+          width: String(displaySize.width),
+          height: String(displaySize.height),
         });
-        return `${wsBase}?${params.toString()}`;
+        if (displaySize.dpi) params.set("dpi", String(displaySize.dpi));
+        return { url: wsBase, query: params.toString() };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
@@ -177,7 +213,7 @@ export const GuacamoleDisplay = forwardRef<
         return null;
       }
     },
-    [connectionConfig, onError],
+    [connectionConfig, onError, t],
   );
 
   const refreshKeyboardHandlers = useCallback(() => {
@@ -272,10 +308,9 @@ export const GuacamoleDisplay = forwardRef<
     setIsReady(false);
     setHasError(false);
 
-    // Wait two frames so the container is fully laid out before measuring.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    // Let layout settle before measuring without depending on animation frames,
+    // which may be throttled while Electron windows or tabs are inactive.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     if (!isMountedRef.current) {
       isConnectingRef.current = false;
       return;
@@ -297,9 +332,7 @@ export const GuacamoleDisplay = forwardRef<
       (containerWidth < 100 || containerHeight < 100) && attempt < 40;
       attempt++
     ) {
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => resolve()),
-      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
       if (!isMountedRef.current) {
         isConnectingRef.current = false;
         return;
@@ -312,19 +345,28 @@ export const GuacamoleDisplay = forwardRef<
       containerHeight = window.innerHeight || 720;
     }
 
-    const wsUrl = await getWebSocketUrl(containerWidth, containerHeight);
+    const wsConnection = await getWebSocketConnection(
+      containerWidth,
+      containerHeight,
+    );
     if (!isMountedRef.current) {
       isConnectingRef.current = false;
       return;
     }
-    if (!wsUrl) {
+    if (!wsConnection) {
       isConnectingRef.current = false;
       return;
     }
 
-    const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
+    const tunnel = new Guacamole.WebSocketTunnel(wsConnection.url);
     const client = new Guacamole.Client(tunnel);
     clientRef.current = client;
+    let connectWatchdog: ReturnType<typeof setTimeout> | null = null;
+    const clearConnectWatchdog = () => {
+      if (!connectWatchdog) return;
+      clearTimeout(connectWatchdog);
+      connectWatchdog = null;
+    };
 
     const display = client.getDisplay();
     const displayElement = display.getElement();
@@ -338,8 +380,34 @@ export const GuacamoleDisplay = forwardRef<
     displayElement.setAttribute("tabindex", "0");
     displayElement.style.outline = "none";
 
+    const useNativePasteFallback = isFirefoxBrowser();
+    if (useNativePasteFallback) {
+      displayElement.addEventListener(
+        "keydown",
+        (event) => {
+          if (isPasteShortcut(event)) {
+            event.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
+      displayElement.addEventListener(
+        "paste",
+        (event) => {
+          if (clientRef.current !== client) return;
+          const text = event.clipboardData?.getData("text/plain");
+          if (!text) return;
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          pasteTextToRemote(client, text);
+        },
+        true,
+      );
+    }
+
     display.onresize = () => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || clientRef.current !== client) return;
       rescaleDisplay(true);
       setIsReady(true);
     };
@@ -349,26 +417,46 @@ export const GuacamoleDisplay = forwardRef<
       setIsReady(true);
     }
 
-    const mouse = new Guacamole.Mouse(displayElement);
-    const sendMouseState = (state: Guacamole.Mouse.State) => {
+    const sendMouseEvent = (event: Guacamole.Mouse.MouseEvent) => {
       displayElement.focus({ preventScroll: true });
       const scale = scaleRef.current;
-      const adjustedX = Math.round(state.x / scale);
-      const adjustedY = Math.round(state.y / scale);
-
+      const state = event.state;
       const adjustedState = new Guacamole.Mouse.State(
-        adjustedX,
-        adjustedY,
+        Math.round(state.x / scale),
+        Math.round(state.y / scale),
         state.left,
         state.middle,
         state.right,
         state.up,
         state.down,
       ) as Guacamole.Mouse.State;
-
       client.sendMouseState(adjustedState);
     };
-    mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = sendMouseState;
+
+    if (touchMode === "touchscreen") {
+      const touchscreen = new Guacamole.Mouse.Touchscreen(displayElement);
+      touchscreen.onEach(["mousedown", "mousemove", "mouseup"], sendMouseEvent);
+    } else if (touchMode === "touchpad") {
+      const touchpad = new Guacamole.Mouse.Touchpad(displayElement);
+      touchpad.onEach(["mousedown", "mousemove", "mouseup"], sendMouseEvent);
+    } else {
+      const mouse = new Guacamole.Mouse(displayElement);
+      const sendMouseState = (state: Guacamole.Mouse.State) => {
+        displayElement.focus({ preventScroll: true });
+        const scale = scaleRef.current;
+        const adjustedState = new Guacamole.Mouse.State(
+          Math.round(state.x / scale),
+          Math.round(state.y / scale),
+          state.left,
+          state.middle,
+          state.right,
+          state.up,
+          state.down,
+        ) as Guacamole.Mouse.State;
+        client.sendMouseState(adjustedState);
+      };
+      mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = sendMouseState;
+    }
 
     const keyboard = new Guacamole.Keyboard(displayElement);
     keyboardRef.current = keyboard;
@@ -386,10 +474,13 @@ export const GuacamoleDisplay = forwardRef<
     displayElement.addEventListener("focus", handleDisplayFocus);
     displayElement.addEventListener("blur", handleDisplayBlur);
     displayElement.addEventListener("mousedown", handleDisplayFocus);
+    displayElement.addEventListener("touchstart", handleDisplayFocus, {
+      passive: true,
+    });
     refreshKeyboardHandlers();
 
     client.onstatechange = (state: number) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || clientRef.current !== client) return;
       switch (state) {
         case 0:
           break;
@@ -398,30 +489,41 @@ export const GuacamoleDisplay = forwardRef<
         case 2:
           break;
         case 3:
+          clearConnectWatchdog();
           isConnectingRef.current = false;
           setIsReady(true);
           onConnect?.();
           if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
-            const w = Math.round(rect.width);
-            const h = Math.round(rect.height);
-            if (w > 0 && h > 0) client.sendSize(w, h);
+            const size = getGuacamoleDisplaySize(
+              rect.width,
+              rect.height,
+              protocol,
+              window.devicePixelRatio,
+              connectionConfig.dpi,
+            );
+            client.sendSize(size.width, size.height);
           }
           rescaleDisplay(false);
           break;
         case 4:
           break;
         case 5:
+          clearConnectWatchdog();
+          isConnectingRef.current = false;
           setIsReady(false);
+          setHasError(true);
           hasKeyboardFocusRef.current = false;
           refreshKeyboardHandlers();
+          onError?.(t("guacamole.connectionError"));
           onDisconnect?.();
           break;
       }
     };
 
     client.onerror = (error: Guacamole.Status) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || clientRef.current !== client) return;
+      clearConnectWatchdog();
       const errorMessage = error.message || t("guacamole.connectionError");
       setIsReady(false);
       setHasError(true);
@@ -465,8 +567,21 @@ export const GuacamoleDisplay = forwardRef<
     };
 
     try {
-      client.connect();
+      connectWatchdog = setTimeout(() => {
+        if (
+          !isMountedRef.current ||
+          clientRef.current !== client ||
+          !isConnectingRef.current
+        ) {
+          return;
+        }
+
+        disconnectClient();
+        void connect();
+      }, 8000);
+      client.connect(wsConnection.query);
     } catch (error) {
+      clearConnectWatchdog();
       isConnectingRef.current = false;
       if (!isMountedRef.current) return;
       setIsReady(false);
@@ -476,14 +591,17 @@ export const GuacamoleDisplay = forwardRef<
       );
     }
   }, [
-    getWebSocketUrl,
+    getWebSocketConnection,
     onConnect,
     onDisconnect,
     onError,
     refreshKeyboardHandlers,
     rescaleDisplay,
+    disconnectClient,
     connectionConfig.protocol,
     connectionConfig.type,
+    connectionConfig.dpi,
+    touchMode,
     t,
   ]);
 
@@ -557,10 +675,15 @@ export const GuacamoleDisplay = forwardRef<
       resizeTimeoutRef.current = setTimeout(() => {
         if (clientRef.current && containerRef.current) {
           const rect = containerRef.current.getBoundingClientRect();
-          const w = Math.round(rect.width);
-          const h = Math.round(rect.height);
-          if (w > 0 && h > 0) {
-            clientRef.current.sendSize(w, h);
+          const size = getGuacamoleDisplaySize(
+            rect.width,
+            rect.height,
+            connectionConfig.protocol ?? connectionConfig.type,
+            window.devicePixelRatio,
+            connectionConfig.dpi,
+          );
+          if (rect.width > 0 && rect.height > 0) {
+            clientRef.current.sendSize(size.width, size.height);
             rescaleDisplay(true);
           }
         }
@@ -572,11 +695,16 @@ export const GuacamoleDisplay = forwardRef<
     return () => {
       resizeObserver.disconnect();
     };
-  }, [rescaleDisplay]);
+  }, [
+    connectionConfig.dpi,
+    connectionConfig.protocol,
+    connectionConfig.type,
+    rescaleDisplay,
+  ]);
 
   const syncClipboard = useCallback(() => {
     const client = clientRef.current;
-    if (!client || !navigator.clipboard?.readText) return;
+    if (!client || isFirefoxBrowser() || !navigator.clipboard?.readText) return;
     navigator.clipboard
       .readText()
       .then((text) => {

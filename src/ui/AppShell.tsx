@@ -6,30 +6,101 @@ import { Separator } from "@/components/separator";
 import { Button } from "@/components/button";
 import { Sheet, SheetContent } from "@/components/sheet";
 import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
-import { useState, useRef, useCallback, useEffect, createRef } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  createRef,
+  lazy,
+  Suspense,
+} from "react";
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileBottomBar } from "@/shell/MobileBottomBar";
-import { CommandPalette } from "@/shell/CommandPalette";
 import { AppRail } from "@/sidebar/AppRail";
 import type { RailView } from "@/sidebar/AppRail";
-import { HostsPanel } from "@/sidebar/HostsPanel";
-import { QuickConnectPanel } from "@/sidebar/QuickConnectPanel";
-import { SerialPanel } from "@/sidebar/SerialPanel";
-import { SshToolsPanel } from "@/sidebar/SshToolsPanel";
-import { SnippetsPanel } from "@/sidebar/SnippetsPanel";
-import { HistoryPanel } from "@/sidebar/HistoryPanel";
-import { SessionLogsPanel } from "@/sidebar/SessionLogsPanel";
-import { SplitScreenPanel } from "@/sidebar/SplitScreenPanel";
-import { UserProfilePanel } from "@/sidebar/UserProfilePanel";
-import { AdminSettingsPanel } from "@/sidebar/AdminSettingsPanel";
-import { AlertsPanel } from "@/sidebar/AlertsPanel";
-import { CredentialsPanel } from "@/sidebar/CredentialsPanel";
-import { TermixIdPanel } from "@/sidebar/TermixIdPanel";
 import { SplitView } from "@/shell/SplitView";
 import { renderTabContent } from "@/shell/tabUtils";
-import { AlertManager } from "@/dashboard/panels/alerts/AlertManager";
 import { TabBar } from "@/shell/TabBar";
+
+// Shell surfaces that are not needed for first paint.
+const CommandPalette = lazy(() =>
+  import("@/shell/CommandPalette").then((m) => ({
+    default: m.CommandPalette,
+  })),
+);
+const HostsPanel = lazy(() =>
+  import("@/sidebar/HostsPanel").then((m) => ({ default: m.HostsPanel })),
+);
+const QuickConnectPanel = lazy(() =>
+  import("@/sidebar/QuickConnectPanel").then((m) => ({
+    default: m.QuickConnectPanel,
+  })),
+);
+const SerialPanel = lazy(() =>
+  import("@/sidebar/SerialPanel").then((m) => ({ default: m.SerialPanel })),
+);
+const SplitScreenPanel = lazy(() =>
+  import("@/sidebar/SplitScreenPanel").then((m) => ({
+    default: m.SplitScreenPanel,
+  })),
+);
+const AlertManager = lazy(() =>
+  import("@/dashboard/panels/alerts/AlertManager").then((m) => ({
+    default: m.AlertManager,
+  })),
+);
+
+// Secondary rail panels — load on first open, not with the shell critical path.
+const SshToolsPanel = lazy(() =>
+  import("@/sidebar/SshToolsPanel").then((m) => ({ default: m.SshToolsPanel })),
+);
+const SnippetsPanel = lazy(() =>
+  import("@/sidebar/SnippetsPanel").then((m) => ({ default: m.SnippetsPanel })),
+);
+const HistoryPanel = lazy(() =>
+  import("@/sidebar/HistoryPanel").then((m) => ({ default: m.HistoryPanel })),
+);
+const SessionLogsPanel = lazy(() =>
+  import("@/sidebar/SessionLogsPanel").then((m) => ({
+    default: m.SessionLogsPanel,
+  })),
+);
+const UserProfilePanel = lazy(() =>
+  import("@/sidebar/UserProfilePanel").then((m) => ({
+    default: m.UserProfilePanel,
+  })),
+);
+const AdminSettingsPanel = lazy(() =>
+  import("@/sidebar/AdminSettingsPanel").then((m) => ({
+    default: m.AdminSettingsPanel,
+  })),
+);
+const AlertsPanel = lazy(() =>
+  import("@/sidebar/AlertsPanel").then((m) => ({ default: m.AlertsPanel })),
+);
+const CredentialsPanel = lazy(() =>
+  import("@/sidebar/CredentialsPanel").then((m) => ({
+    default: m.CredentialsPanel,
+  })),
+);
+const TermixIdPanel = lazy(() =>
+  import("@/sidebar/TermixIdPanel").then((m) => ({ default: m.TermixIdPanel })),
+);
+const ConnectionsPanel = lazy(() =>
+  import("@/sidebar/ConnectionsPanel").then((m) => ({
+    default: m.ConnectionsPanel,
+  })),
+);
+
+function SidebarPanelFallback() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-6">
+      <div className="size-5 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground/70 animate-spin" />
+    </div>
+  );
+}
 import type {
   Tab,
   TabType,
@@ -51,22 +122,32 @@ import {
   addOpenTab,
   deleteOpenTab,
   patchOpenTab,
+  createSSHHost,
   getActiveSessions,
   getUserPreferences,
+  dismissDonationModal,
+  isElectron,
   type UserPreferences,
   type OpenTabRecord,
 } from "@/main-axios";
+import { DonationReminderModal } from "@/user/DonationReminderModal.tsx";
+import { RemoteSyncBanner } from "@/components/RemoteSyncBanner.tsx";
+import { MigrationNoticeDialog } from "@/components/MigrationNoticeDialog.tsx";
 import { dbHealthMonitor } from "@/lib/db-health-monitor";
 import type { SSHHostWithStatus } from "@/main-axios";
 import { ServerStatusProvider } from "@/lib/ServerStatusContext";
-import { ConnectionsPanel } from "@/sidebar/ConnectionsPanel";
 import { TransferMonitor } from "@/features/file-manager/TransferMonitor.tsx";
 import { sshHostToHost } from "@/sidebar/HostManagerData";
 import { resolveHostTabType } from "@/lib/host-connection-tabs";
+import { changeAppLanguage } from "@/i18n/i18n";
+import { quickConnectHostToPayload } from "@/sidebar/quick-connect-host";
 
 function buildHostTree(
   hosts: SSHHostWithStatus[],
-  folderMeta?: Map<string, { color?: string; icon?: string }>,
+  folderMeta?: Map<
+    string,
+    { color?: string; icon?: string; credentialId?: number | null }
+  >,
 ): HostFolder {
   const root: HostFolder = { name: "root", children: [] };
   const folderMap = new Map<string, HostFolder>();
@@ -84,6 +165,7 @@ function buildHostTree(
           path: accumulated,
           color: meta?.color,
           icon: meta?.icon,
+          credentialId: meta?.credentialId ?? null,
           children: [],
         };
         folderMap.set(accumulated, folder);
@@ -114,11 +196,9 @@ export { tabIcon, renderTabContent } from "@/shell/tabUtils";
 export function AppShell({
   username,
   onLogout,
-  onChangeServer,
 }: {
   username: string;
   onLogout: () => void;
-  onChangeServer?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { setTheme } = useTheme();
@@ -143,11 +223,14 @@ export function AppShell({
   const [splitMode, setSplitMode] = useState<SplitMode>(
     () => (localStorage.getItem("termix_splitMode") as SplitMode) ?? "none",
   );
-  const [paneTabIds, setPaneTabIds] = useState<(string | null)[]>(
-    () =>
-      JSON.parse(localStorage.getItem("termix_paneTabIds") ?? "null") ??
-      Array(6).fill(null),
+  // paneTabIds holds live tab.id values, which change on every restore, so we
+  // can't restore it from storage directly. It starts empty and gets filled in
+  // once by the reconciliation effect below, keyed off the stable instanceId
+  // values saved in termix_paneInstanceIds.
+  const [paneTabIds, setPaneTabIds] = useState<(string | null)[]>(() =>
+    Array(6).fill(null),
   );
+  const paneLayoutRestoredRef = useRef(false);
   useEffect(() => {
     paneTabIdsRef.current = paneTabIds;
   }, [paneTabIds]);
@@ -156,13 +239,24 @@ export function AppShell({
   const [hostsLoading, setHostsLoading] = useState(true);
   const [allHosts, setAllHosts] = useState<Host[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  // Remote sync is not yet configurable (added in a later phase), so this
+  // is always false for now -- admin/user-management UI stays hidden until
+  // the desktop app is connected to a remote Termix server, since a
+  // standalone local install has exactly one implicit user and nothing to
+  // administer.
+  const [isRemoteSyncConnected] = useState(false);
+  const showMultiUserUI = isAdmin && (!isElectron() || isRemoteSyncConnected);
   const [userId, setUserId] = useState<string | null>(null);
+  const [showDonationModal, setShowDonationModal] = useState(false);
   const [backgroundTabRecords, setBackgroundTabRecords] = useState<
     OpenTabRecord[]
   >([]);
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [railView, setRailView] = useState<RailView>("hosts");
+  const [remoteSyncInitialServerUrl, setRemoteSyncInitialServerUrl] = useState<
+    string | undefined
+  >(undefined);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem("termix_sidebarWidth");
     return saved ? parseInt(saved, 10) : 291;
@@ -182,8 +276,15 @@ export function AppShell({
   }, [splitMode]);
 
   useEffect(() => {
-    localStorage.setItem("termix_paneTabIds", JSON.stringify(paneTabIds));
-  }, [paneTabIds]);
+    // Don't overwrite the saved layout with the empty initial state before
+    // reconciliation has had a chance to restore it.
+    if (!paneLayoutRestoredRef.current) return;
+    const instanceIds = paneTabIds.map((id) => {
+      if (id == null) return null;
+      return tabs.find((t) => t.id === id)?.instanceId ?? null;
+    });
+    localStorage.setItem("termix_paneInstanceIds", JSON.stringify(instanceIds));
+  }, [paneTabIds, tabs]);
 
   const isMobile = useIsMobile();
 
@@ -202,8 +303,14 @@ export function AppShell({
       .then((info) => {
         setIsAdmin(info.is_admin);
         setUserId(info.userId);
+        setShowDonationModal(!!info.show_donation_modal);
       })
       .catch(() => setIsAdmin(false));
+  }, []);
+
+  const handleDismissDonationModal = useCallback(() => {
+    setShowDonationModal(false);
+    dismissDonationModal().catch(() => {});
   }, []);
 
   const toggleAppFullscreen = useCallback(async () => {
@@ -618,8 +725,7 @@ export function AppShell({
             applyAccentColor(prefs.accentColor);
           }
           if (prefs.language && prefs.language !== i18n.language) {
-            localStorage.setItem("i18nextLng", prefs.language);
-            void i18n.changeLanguage(prefs.language);
+            void changeAppLanguage(prefs.language);
           }
           if (
             prefs.commandAutocomplete !== null &&
@@ -717,11 +823,15 @@ export function AppShell({
       ]);
       const converted = raw.map(sshHostToHost);
       setAllHosts(converted);
-      const folderMeta = new Map<string, { color?: string; icon?: string }>();
+      const folderMeta = new Map<
+        string,
+        { color?: string; icon?: string; credentialId?: number | null }
+      >();
       for (const f of folders) {
         folderMeta.set(f.name, {
           color: f.color ?? undefined,
           icon: f.icon ?? undefined,
+          credentialId: f.credentialId ?? null,
         });
       }
       setRealHostTree(buildHostTree(raw, folderMeta));
@@ -738,8 +848,17 @@ export function AppShell({
   }, [loadHosts]);
 
   useEffect(() => {
-    window.addEventListener("termix:hosts-changed", loadHosts);
-    return () => window.removeEventListener("termix:hosts-changed", loadHosts);
+    const onHostsChanged = () => {
+      void loadHosts();
+    };
+    window.addEventListener("termix:hosts-changed", onHostsChanged);
+    window.addEventListener("ssh-hosts:changed", onHostsChanged);
+    window.addEventListener("hosts:refresh", onHostsChanged);
+    return () => {
+      window.removeEventListener("termix:hosts-changed", onHostsChanged);
+      window.removeEventListener("ssh-hosts:changed", onHostsChanged);
+      window.removeEventListener("hosts:refresh", onHostsChanged);
+    };
   }, [loadHosts]);
 
   // Sync tab host data when allHosts updates (e.g. after editing terminal theme in host settings)
@@ -878,6 +997,35 @@ export function AppShell({
     loadSavedTabs();
   }, [hostsLoaded, userPrefsLoaded]);
 
+  // Restore split-screen pane assignments once tabs are settled. Saved assignments are
+  // keyed by instanceId (stable across reloads) and remapped to the live tab.id here,
+  // since tab.id is regenerated every time a tab is (re)opened.
+  useEffect(() => {
+    if (!tabsReady || paneLayoutRestoredRef.current) return;
+    paneLayoutRestoredRef.current = true;
+
+    try {
+      const savedInstanceIds: (string | null)[] = JSON.parse(
+        localStorage.getItem("termix_paneInstanceIds") ?? "null",
+      );
+      if (!Array.isArray(savedInstanceIds)) return;
+
+      const restored = savedInstanceIds.map((instanceId) => {
+        if (instanceId == null) return null;
+        return tabs.find((t) => t.instanceId === instanceId)?.id ?? null;
+      });
+      if (restored.some((id) => id != null)) {
+        setPaneTabIds(restored);
+      } else {
+        // None of the saved panes could be restored (e.g. reopen-tabs-on-login
+        // is disabled), so drop back to a single view instead of an empty split.
+        setSplitMode("none");
+      }
+    } catch {
+      // silently fail
+    }
+  }, [tabsReady, tabs]);
+
   // Debounced tab-order sync: when tab order changes, patch each persistent tab's tabOrder in DB.
   const orderSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -916,6 +1064,8 @@ export function AppShell({
       savedLabel?: string;
       initialFilePath?: string;
       serialConfig?: SerialConfig;
+      joinSharedSessionId?: string | null;
+      joinShareId?: string | null;
     },
   ) {
     const tabId = `${host.name}-${type}-${Date.now()}`;
@@ -932,6 +1082,8 @@ export function AppShell({
     const savedLabel = restore?.savedLabel;
     const initialFilePath = restore?.initialFilePath;
     const serialConfig = restore?.serialConfig;
+    const joinSharedSessionId = restore?.joinSharedSessionId ?? null;
+    const joinShareId = restore?.joinShareId ?? null;
     // A saved label that doesn't match the bare host name or the auto-numbered pattern is a custom label
     const isCustomLabel =
       savedLabel != null &&
@@ -953,6 +1105,8 @@ export function AppShell({
             openedAt,
             terminalRef: ref,
             restoredSessionId: restore?.restoredSessionId ?? null,
+            joinSharedSessionId,
+            joinShareId,
             initialFilePath,
             serialConfig,
           },
@@ -985,6 +1139,8 @@ export function AppShell({
           openedAt,
           terminalRef: ref,
           restoredSessionId: restore?.restoredSessionId ?? null,
+          joinSharedSessionId,
+          joinShareId,
           initialFilePath,
           serialConfig,
         },
@@ -1012,6 +1168,21 @@ export function AppShell({
     }
     openTab(host, type);
   }
+
+  const saveQuickConnectHost = useCallback(
+    async (tab: Tab, host: Host) => {
+      try {
+        const savedHost = await createSSHHost(quickConnectHostToPayload(host));
+        await patchOpenTab(tab.instanceId, { hostId: savedHost.id });
+        await loadHosts();
+        toast.success(t("hosts.hostCreated"));
+      } catch (error) {
+        toast.error(t("hosts.failedToSave"));
+        throw error;
+      }
+    },
+    [loadHosts, t],
+  );
 
   function openSerialTab(config: SerialConfig) {
     const pseudoHost: Host = {
@@ -1222,6 +1393,17 @@ export function AppShell({
       window.dispatchEvent(
         new CustomEvent("termix:refresh-guacamole", { detail: { tabId: id } }),
       );
+    }
+  }
+
+  function openShareForTab(id: string) {
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const ref = tab.terminalRef?.current;
+    if (ref?.canShare?.()) {
+      ref.openShareModal?.();
+    } else {
+      toast.error(t("sessionSharing.notReadyToShare"));
     }
   }
 
@@ -1437,169 +1619,232 @@ export function AppShell({
 
   // Sidebar panel content — shared between desktop inline sidebar and mobile sheet
   const sidebarPanelContent = (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div
-        className={`flex flex-col flex-1 min-h-0 ${railView === "hosts" ? "" : "hidden"}`}
-      >
-        <HostsPanel
-          onOpenTab={(host, type) => {
-            connectHost(host, type);
-            if (isMobile) setSidebarOpen(false);
-          }}
-          onEditHost={editHostInManager}
-          hostTree={realHostTree ?? undefined}
-          loading={hostsLoading}
-          onEditingChange={setSidebarEditing}
-          active={railView === "hosts"}
-        />
-      </div>
-
-      <div
-        className={`flex flex-col flex-1 min-h-0 ${railView === "credentials" ? "" : "hidden"}`}
-      >
-        <CredentialsPanel
-          onEditingChange={setSidebarEditing}
-          active={railView === "credentials"}
-        />
-      </div>
-
-      {railView === "termix-id" && (
-        <div className="flex flex-col flex-1 min-h-0">
-          <TermixIdPanel />
-        </div>
-      )}
-
-      {railView === "serial" && (
-        <SerialPanel
-          onConnect={(config) => {
-            openSerialTab(config);
-            if (isMobile) setSidebarOpen(false);
-          }}
-        />
-      )}
-
-      {railView === "quick-connect" && (
-        <QuickConnectPanel
-          onConnect={(host, type) => {
-            openTab(host, type);
-            if (isMobile) setSidebarOpen(false);
-          }}
-        />
-      )}
-
-      {railView === "ssh-tools" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <SshToolsPanel
-            terminalTabs={terminalTabs}
-            activeTabId={activeTabId}
-          />
-        </div>
-      )}
-
-      {railView === "snippets" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <SnippetsPanel
-            terminalTabs={terminalTabs}
-            activeTabId={activeTabId}
-          />
-        </div>
-      )}
-
-      {railView === "history" && (
-        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
-          <HistoryPanel terminalTabs={terminalTabs} activeTabId={activeTabId} />
-        </div>
-      )}
-
-      {railView === "split-screen" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <SplitScreenPanel
-            tabs={tabs}
-            splitMode={splitMode}
-            setSplitMode={setSplitMode}
-            paneTabIds={paneTabIds}
-            setPaneTabIds={setPaneTabIds}
-            onAssignPane={assignPane}
-          />
-        </div>
-      )}
-
-      {railView === "connections" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <ConnectionsPanel
-            tabs={tabs}
-            activeTabId={activeTabId}
-            allHosts={allHosts}
-            backgroundTabRecords={backgroundTabRecords}
-            onSwitchToTab={(tabId) => {
-              setActiveTabId(tabId);
+    <Suspense fallback={<SidebarPanelFallback />}>
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${railView === "hosts" ? "" : "hidden"}`}
+        >
+          <HostsPanel
+            onOpenTab={(host, type) => {
+              connectHost(host, type);
               if (isMobile) setSidebarOpen(false);
             }}
-            onCloseTab={closeTab}
-            onReopenTab={(record, restoredSessionId) => {
-              const host = record.hostId
-                ? allHosts.find((h) => h.id === String(record.hostId))
-                : undefined;
-              const hostlessTypes: TabType[] = ["tunnel"];
-              if (!host && !hostlessTypes.includes(record.tabType as TabType))
-                return;
-              setBackgroundTabRecords((prev) =>
-                prev.filter((r) => r.id !== record.id),
-              );
-              if (host) {
-                const effectiveSessionId =
-                  restoredSessionId ?? record.backendSessionId ?? null;
-                openTab(host, record.tabType as TabType, {
-                  instanceId: record.id,
-                  restoredSessionId: effectiveSessionId,
-                  savedLabel: record.label,
+            onEditHost={editHostInManager}
+            hostTree={realHostTree ?? undefined}
+            loading={hostsLoading}
+            onEditingChange={setSidebarEditing}
+            active={railView === "hosts"}
+          />
+        </div>
+
+        <div
+          className={`flex flex-col flex-1 min-h-0 ${railView === "credentials" ? "" : "hidden"}`}
+        >
+          <CredentialsPanel
+            onEditingChange={setSidebarEditing}
+            active={railView === "credentials"}
+          />
+        </div>
+
+        {railView === "termix-id" && (
+          <div className="flex flex-col flex-1 min-h-0">
+            <TermixIdPanel />
+          </div>
+        )}
+
+        {railView === "serial" && (
+          <SerialPanel
+            onConnect={(config) => {
+              openSerialTab(config);
+              if (isMobile) setSidebarOpen(false);
+            }}
+          />
+        )}
+
+        {railView === "quick-connect" && (
+          <QuickConnectPanel
+            onConnect={(host, type) => {
+              openTab(host, type);
+              if (isMobile) setSidebarOpen(false);
+            }}
+          />
+        )}
+
+        {railView === "ssh-tools" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <SshToolsPanel
+              terminalTabs={terminalTabs}
+              activeTabId={activeTabId}
+            />
+          </div>
+        )}
+
+        {railView === "snippets" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <SnippetsPanel
+              terminalTabs={terminalTabs}
+              activeTabId={activeTabId}
+            />
+          </div>
+        )}
+
+        {railView === "history" && (
+          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+            <HistoryPanel
+              terminalTabs={terminalTabs}
+              activeTabId={activeTabId}
+            />
+          </div>
+        )}
+
+        {railView === "split-screen" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <SplitScreenPanel
+              tabs={tabs}
+              splitMode={splitMode}
+              setSplitMode={setSplitMode}
+              paneTabIds={paneTabIds}
+              setPaneTabIds={setPaneTabIds}
+              onAssignPane={assignPane}
+            />
+          </div>
+        )}
+
+        {railView === "connections" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <ConnectionsPanel
+              tabs={tabs}
+              activeTabId={activeTabId}
+              allHosts={allHosts}
+              backgroundTabRecords={backgroundTabRecords}
+              onSwitchToTab={(tabId) => {
+                setActiveTabId(tabId);
+                if (isMobile) setSidebarOpen(false);
+              }}
+              onCloseTab={closeTab}
+              onReopenTab={(record, restoredSessionId) => {
+                const host = record.hostId
+                  ? allHosts.find((h) => h.id === String(record.hostId))
+                  : undefined;
+                const hostlessTypes: TabType[] = ["tunnel"];
+                if (!host && !hostlessTypes.includes(record.tabType as TabType))
+                  return;
+                setBackgroundTabRecords((prev) =>
+                  prev.filter((r) => r.id !== record.id),
+                );
+                if (host) {
+                  const effectiveSessionId =
+                    restoredSessionId ?? record.backendSessionId ?? null;
+                  openTab(host, record.tabType as TabType, {
+                    instanceId: record.id,
+                    restoredSessionId: effectiveSessionId,
+                    savedLabel: record.label,
+                  });
+                } else {
+                  openSingletonTab(record.tabType as TabType);
+                }
+                if (isMobile) setSidebarOpen(false);
+              }}
+              onForgetBackground={(recordId) => {
+                setBackgroundTabRecords((prev) =>
+                  prev.filter((r) => r.id !== recordId),
+                );
+              }}
+              onRenameTab={renameTab}
+              onReorderTabs={setTabs}
+              onJoinSharedSession={(session) => {
+                if (!session.shareId) return;
+                const existingHost = allHosts.find(
+                  (h) => h.id === String(session.hostId),
+                );
+                const host: Host = existingHost ?? {
+                  id: String(session.hostId),
+                  name: session.hostName,
+                  username: "",
+                  ip: "",
+                  port: 0,
+                  folder: "",
+                  online: false,
+                  cpu: null,
+                  ram: null,
+                  lastAccess: new Date().toISOString(),
+                  authType: "none",
+                  enableTerminal: false,
+                  enableCommandHistory: false,
+                  enableTunnel: false,
+                  enableFileManager: false,
+                  enableDocker: false,
+                  enableProxmox: false,
+                  enableTmuxMonitor: false,
+                  enableSsh: false,
+                  enableRdp: false,
+                  enableVnc: false,
+                  enableTelnet: false,
+                  sshPort: 22,
+                  rdpPort: 3389,
+                  vncPort: 5900,
+                  telnetPort: 23,
+                  serverTunnels: [],
+                  quickActions: [],
+                };
+                const instanceId =
+                  typeof crypto.randomUUID === "function"
+                    ? crypto.randomUUID()
+                    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+                openTab(host, "terminal", {
+                  instanceId,
+                  restoredSessionId: null,
+                  joinSharedSessionId: session.sessionId,
+                  joinShareId: session.shareId,
+                  savedLabel: t("connections.sharedSessionLabel", {
+                    hostName: session.hostName,
+                  }),
                 });
-              } else {
-                openSingletonTab(record.tabType as TabType);
+                if (isMobile) setSidebarOpen(false);
+              }}
+            />
+          </div>
+        )}
+
+        {railView === "session-logs" && (
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            <SessionLogsPanel />
+          </div>
+        )}
+
+        {railView === "user-profile" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <UserProfilePanel
+              username={username}
+              onLogout={onLogout}
+              userPrefs={userPrefs}
+              onPrefsChange={(updates) =>
+                setUserPrefs((current) => ({ ...current, ...updates }))
               }
-              if (isMobile) setSidebarOpen(false);
-            }}
-            onForgetBackground={(recordId) => {
-              setBackgroundTabRecords((prev) =>
-                prev.filter((r) => r.id !== recordId),
-              );
-            }}
-            onRenameTab={renameTab}
-            onReorderTabs={setTabs}
-          />
-        </div>
-      )}
+              remoteSyncInitialServerUrl={remoteSyncInitialServerUrl}
+            />
+          </div>
+        )}
 
-      {railView === "session-logs" && (
-        <div className="relative flex-1 min-h-0 flex flex-col">
-          <SessionLogsPanel />
-        </div>
-      )}
+        {railView === "admin-settings" && showMultiUserUI && (
+          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+            <AdminSettingsPanel
+              onEditingChange={setSidebarEditing}
+              onOpenHostTab={(host) => {
+                connectHost(host);
+                if (isMobile) setSidebarOpen(false);
+              }}
+            />
+          </div>
+        )}
 
-      {railView === "user-profile" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <UserProfilePanel
-            username={username}
-            onLogout={onLogout}
-            onChangeServer={onChangeServer}
-            userPrefs={userPrefs}
-            onPrefsChange={setUserPrefs}
-          />
-        </div>
-      )}
-
-      {railView === "admin-settings" && isAdmin && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <AdminSettingsPanel />
-        </div>
-      )}
-
-      {railView === "alerts" && (
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          <AlertsPanel />
-        </div>
-      )}
-    </div>
+        {railView === "alerts" && (
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <AlertsPanel />
+          </div>
+        )}
+      </div>
+    </Suspense>
   );
 
   // Sidebar header — shared
@@ -1636,207 +1881,245 @@ export function AppShell({
 
   return (
     <ServerStatusProvider isAuthenticated={!!username}>
-      <div className="flex w-screen bg-background" style={{ height: "100dvh" }}>
-        {/* Skinny icon rail — desktop only, hidden on mobile */}
-        <AppRail
-          railView={railView}
-          sidebarOpen={sidebarOpen}
-          splitMode={splitMode}
-          username={username}
-          isAdmin={isAdmin}
-          onRailClick={handleRailClick}
-          onOpenTab={openSingletonTab}
-          onLogout={onLogout}
-        />
-
-        {/* Desktop: inline resizable sidebar */}
-        {!isMobile && (
-          <div
-            className={`relative flex flex-col bg-sidebar shrink-0 overflow-hidden ${sidebarOpen ? `border-r transition-colors ${sidebarDragging ? "border-accent-brand/60" : "border-border"}` : ""}`}
-            style={{
-              width: sidebarOpen ? (sidebarEditing ? 560 : sidebarWidth) : 0,
-              transition: sidebarDragging ? "none" : "width 0.2s",
-            }}
-          >
-            {sidebarHeader}
-            {sidebarPanelContent}
-
-            {sidebarOpen && !sidebarEditing && (
-              <div
-                onMouseDown={onSidebarMouseDown}
-                className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-30 transition-colors ${sidebarDragging ? "bg-accent-brand/60" : "hover:bg-accent-brand/40"}`}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Mobile: sidebar as overlay sheet */}
-        {isMobile && (
-          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-            <SheetContent
-              side="left"
-              showCloseButton={false}
-              className="p-0 flex flex-col w-[min(85vw,360px)] max-w-full bg-sidebar border-r border-border gap-0"
-              style={{ height: "100dvh" }}
-            >
-              {sidebarHeader}
-              {sidebarPanelContent}
-            </SheetContent>
-          </Sheet>
-        )}
-
-        {/* Main content area */}
-        <div
-          className={`relative flex flex-col flex-1 min-w-0 overflow-hidden transition-all duration-200 ${!isMobile && !sidebarOpen ? "pl-6" : ""}`}
-        >
-          {!isMobile && !sidebarOpen && (
-            <button
-              onClick={() => setSidebarOpen(true)}
-              title="Open Sidebar"
-              className="absolute left-0 top-0 bottom-0 z-20 flex items-center justify-center w-6 bg-sidebar border-r border-border text-muted-foreground hover:text-accent-brand hover:bg-accent-brand/5 transition-colors"
-            >
-              <ChevronRight className="size-3.5" />
-            </button>
-          )}
-          <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
-            <TabBar
-              tabs={tabs}
-              activeTabId={activeTabId}
-              splitMode={splitMode}
-              paneTabIds={paneTabIds}
-              focusedPaneIndex={focusedPaneIndex}
-              onSetActiveTab={setActiveTabId}
-              onCloseTab={closeTab}
-              onRefreshTab={refreshTab}
-              onReorderTabs={setTabs}
-              onSplitTab={splitTabQuick}
-              onAddToSplit={addTabToSplit}
-              onRemoveFromSplit={removeTabFromSplit}
-              onRenameTab={renameTab}
-              isAppFullscreen={isAppFullscreen}
-              onToggleAppFullscreen={toggleAppFullscreen}
+      <div
+        className="flex flex-col w-screen bg-background"
+        style={{ height: "100dvh" }}
+      >
+        {isElectron() && (
+          <>
+            <RemoteSyncBanner
+              onReconnect={() => {
+                setRailView("user-profile");
+                if (!sidebarOpen) setSidebarOpen(true);
+              }}
             />
-            <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden">
-              {/* Split view — always mounted when not mobile, hidden via CSS when inactive */}
-              {!isMobile && (
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    display: isSplit ? "flex" : "none",
-                    flexDirection: "column",
-                  }}
-                >
-                  <SplitView
-                    tabs={tabs}
-                    paneTabIds={paneTabIds}
-                    splitMode={splitMode}
-                    focusedPaneIndex={focusedPaneIndex}
-                    onTerminalResize={resizeAllTerminals}
-                    onPaneContentRef={onPaneContentRef}
-                    onPaneClick={setFocusedPaneIndex}
-                    onAssignPane={assignPane}
-                  />
-                </div>
-              )}
-
-              {/* Normal-view container. Tab nodes are appended here (or to pane elements)
-                  by the DOM-placement effect above. React portals each tab's content
-                  into its stable per-tab node so the component is never remounted.
-                  When split is active, shown on top only if the active tab is not in a pane. */}
-              <div
-                ref={normalViewRef}
-                className="absolute inset-0"
-                style={{
-                  display:
-                    isSplit && !isMobile && paneTabIds.includes(activeTabId)
-                      ? "none"
-                      : undefined,
-                  zIndex:
-                    isSplit && !paneTabIds.includes(activeTabId)
-                      ? 10
-                      : undefined,
-                }}
-              >
-                {tabs.map((tab) => {
-                  const tabNode = getTabNode(tab.id, tab.type === "terminal");
-                  const paneIdx = isSplit ? paneTabIds.indexOf(tab.id) : -1;
-                  const inPane = paneIdx !== -1;
-                  const activeInline = !inPane && tab.id === activeTabId;
-                  return createPortal(
-                    renderTabContent(
-                      tab,
-                      openSingletonTab,
-                      openTab,
-                      closeTab,
-                      inPane || activeInline,
-                      (host, filePath) =>
-                        openTab(host, "files", {
-                          instanceId:
-                            typeof crypto.randomUUID === "function"
-                              ? crypto.randomUUID()
-                              : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-                          restoredSessionId: null,
-                          initialFilePath: filePath,
-                        }),
-                      (host, _path) => openTab(host, "files"),
-                      (host, path) =>
-                        openTab(host, "terminal", {
-                          instanceId:
-                            typeof crypto.randomUUID === "function"
-                              ? crypto.randomUUID()
-                              : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-                          restoredSessionId: null,
-                          initialFilePath: path,
-                        }),
-                      renameTab,
-                    ),
-                    tabNode,
-                    tab.id,
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom nav bar — mobile only */}
-          <MobileBottomBar
+            <MigrationNoticeDialog
+              onOpenRemoteSync={(url) => {
+                setRemoteSyncInitialServerUrl(url);
+                setRailView("user-profile");
+                if (!sidebarOpen) setSidebarOpen(true);
+              }}
+            />
+          </>
+        )}
+        <div className="flex flex-1 min-h-0">
+          {/* Skinny icon rail — desktop only, hidden on mobile */}
+          <AppRail
             railView={railView}
             sidebarOpen={sidebarOpen}
             splitMode={splitMode}
+            username={username}
+            isAdmin={showMultiUserUI}
             onRailClick={handleRailClick}
+            onOpenTab={openSingletonTab}
+            onLogout={onLogout}
           />
+
+          {/* Desktop: inline resizable sidebar */}
+          {!isMobile && (
+            <div
+              className={`relative flex flex-col min-h-0 bg-sidebar shrink-0 overflow-hidden ${sidebarOpen ? `border-r transition-colors ${sidebarDragging ? "border-accent-brand/60" : "border-border"}` : ""}`}
+              style={{
+                width: sidebarOpen ? (sidebarEditing ? 560 : sidebarWidth) : 0,
+                transition: sidebarDragging ? "none" : "width 0.2s",
+              }}
+            >
+              {sidebarHeader}
+              {sidebarPanelContent}
+
+              {sidebarOpen && !sidebarEditing && (
+                <div
+                  onMouseDown={onSidebarMouseDown}
+                  className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-30 transition-colors ${sidebarDragging ? "bg-accent-brand/60" : "hover:bg-accent-brand/40"}`}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Mobile: sidebar as overlay sheet */}
+          {isMobile && (
+            <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+              <SheetContent
+                side="left"
+                showCloseButton={false}
+                className="p-0 flex flex-col min-h-0 w-[min(85vw,360px)] max-w-full bg-sidebar border-r border-border gap-0"
+                style={{ height: "100dvh" }}
+              >
+                {sidebarHeader}
+                {sidebarPanelContent}
+              </SheetContent>
+            </Sheet>
+          )}
+
+          {/* Main content area */}
+          <div
+            className={`relative flex flex-col flex-1 min-w-0 overflow-hidden transition-all duration-200 ${!isMobile && !sidebarOpen ? "pl-6" : ""}`}
+          >
+            {!isMobile && !sidebarOpen && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                title="Open Sidebar"
+                className="absolute left-0 top-0 bottom-0 z-20 flex items-center justify-center w-6 bg-sidebar border-r border-border text-muted-foreground hover:text-accent-brand hover:bg-accent-brand/5 transition-colors"
+              >
+                <ChevronRight className="size-3.5" />
+              </button>
+            )}
+            <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+              <TabBar
+                tabs={tabs}
+                activeTabId={activeTabId}
+                splitMode={splitMode}
+                paneTabIds={paneTabIds}
+                focusedPaneIndex={focusedPaneIndex}
+                onSetActiveTab={setActiveTabId}
+                onCloseTab={closeTab}
+                onRefreshTab={refreshTab}
+                onReorderTabs={setTabs}
+                onSplitTab={splitTabQuick}
+                onAddToSplit={addTabToSplit}
+                onRemoveFromSplit={removeTabFromSplit}
+                onRenameTab={renameTab}
+                onOpenFileManager={(tabId) => {
+                  const targetTab = tabs.find((t) => t.id === tabId);
+                  if (targetTab?.host) openTab(targetTab.host, "files");
+                }}
+                onOpenShare={openShareForTab}
+                isAppFullscreen={isAppFullscreen}
+                onToggleAppFullscreen={toggleAppFullscreen}
+              />
+              <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden">
+                {/* Split view — always mounted when not mobile, hidden via CSS when inactive */}
+                {!isMobile && (
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      display: isSplit ? "flex" : "none",
+                      flexDirection: "column",
+                    }}
+                  >
+                    <SplitView
+                      tabs={tabs}
+                      paneTabIds={paneTabIds}
+                      splitMode={splitMode}
+                      focusedPaneIndex={focusedPaneIndex}
+                      onTerminalResize={resizeAllTerminals}
+                      onPaneContentRef={onPaneContentRef}
+                      onPaneClick={setFocusedPaneIndex}
+                      onAssignPane={assignPane}
+                    />
+                  </div>
+                )}
+
+                {/* Normal-view container. Tab nodes are appended here (or to pane elements)
+                  by the DOM-placement effect above. React portals each tab's content
+                  into its stable per-tab node so the component is never remounted.
+                  When split is active, shown on top only if the active tab is not in a pane. */}
+                <div
+                  ref={normalViewRef}
+                  className="absolute inset-0"
+                  style={{
+                    display:
+                      isSplit && !isMobile && paneTabIds.includes(activeTabId)
+                        ? "none"
+                        : undefined,
+                    zIndex:
+                      isSplit && !paneTabIds.includes(activeTabId)
+                        ? 10
+                        : undefined,
+                  }}
+                >
+                  {tabs.map((tab) => {
+                    const tabNode = getTabNode(tab.id, tab.type === "terminal");
+                    const paneIdx = isSplit ? paneTabIds.indexOf(tab.id) : -1;
+                    const inPane = paneIdx !== -1;
+                    const activeInline = !inPane && tab.id === activeTabId;
+                    return createPortal(
+                      renderTabContent(
+                        tab,
+                        openSingletonTab,
+                        openTab,
+                        closeTab,
+                        inPane || activeInline,
+                        (host, filePath) =>
+                          openTab(host, "files", {
+                            instanceId:
+                              typeof crypto.randomUUID === "function"
+                                ? crypto.randomUUID()
+                                : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+                            restoredSessionId: null,
+                            initialFilePath: filePath,
+                          }),
+                        (host, _path) => openTab(host, "files"),
+                        (host, path) =>
+                          openTab(host, "terminal", {
+                            instanceId:
+                              typeof crypto.randomUUID === "function"
+                                ? crypto.randomUUID()
+                                : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+                            restoredSessionId: null,
+                            initialFilePath: path,
+                          }),
+                        renameTab,
+                        saveQuickConnectHost,
+                      ),
+                      tabNode,
+                      tab.id,
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom nav bar — mobile only */}
+            <MobileBottomBar
+              railView={railView}
+              sidebarOpen={sidebarOpen}
+              splitMode={splitMode}
+              onRailClick={handleRailClick}
+            />
+          </div>
         </div>
       </div>
 
-      <CommandPalette
-        isOpen={commandPaletteOpen}
-        setIsOpen={setCommandPaletteOpen}
-        hosts={allHosts}
-        onOpenTab={(type, label, pendingEvent) => {
-          if (
-            [
-              "dashboard",
-              "host-manager",
-              "user-profile",
-              "admin-settings",
-            ].includes(type)
-          ) {
-            openSingletonTab(type, pendingEvent);
-          } else if (type === "tmux_monitor") {
-            // --- tmux-monitor --- singleton tab, optionally preselecting a host
-            openSingletonTab(
-              type,
-              undefined,
-              label ? allHosts.find((h) => h.name === label) : undefined,
-            );
-          } else if (label) {
-            const host = allHosts.find((h) => h.name === label);
-            if (host) openTab(host, type);
-          }
-        }}
-      />
+      {commandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette
+            isOpen={commandPaletteOpen}
+            setIsOpen={setCommandPaletteOpen}
+            hosts={allHosts}
+            onOpenTab={(type, label, pendingEvent) => {
+              if (
+                [
+                  "dashboard",
+                  "host-manager",
+                  "user-profile",
+                  "admin-settings",
+                ].includes(type)
+              ) {
+                openSingletonTab(type, pendingEvent);
+              } else if (type === "tmux_monitor") {
+                // --- tmux-monitor --- singleton tab, optionally preselecting a host
+                openSingletonTab(
+                  type,
+                  undefined,
+                  label ? allHosts.find((h) => h.name === label) : undefined,
+                );
+              } else if (label) {
+                const host = allHosts.find((h) => h.name === label);
+                if (host) openTab(host, type);
+              }
+            }}
+          />
+        </Suspense>
+      )}
       <TransferMonitor />
-      <AlertManager userId={userId} loggedIn={!!username} />
+      <Suspense fallback={null}>
+        <AlertManager userId={userId} loggedIn={!!username} />
+      </Suspense>
+      <DonationReminderModal
+        open={showDonationModal}
+        onDismiss={handleDismissDonationModal}
+      />
     </ServerStatusProvider>
   );
 }

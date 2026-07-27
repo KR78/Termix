@@ -61,6 +61,8 @@ const MAX_LINE_LENGTH = 2000;
 // (mc, nano, vim, htop). If a chunk contains these, highlighting can inject
 // extra SGR bytes into a full-screen redraw and corrupt xterm's cursor state.
 const TUI_SEQUENCE = /\x1b\[(?:[\d;]*[ABCDEFGHJKST]|\?[\d;]*[hl])/;
+const TUI_FRAME_SEQUENCE = /[\u2500-\u257f]|\x1b[()][0B]|\x1b\[[0-9;]*[~`]/;
+const CONTROL_STRING_SEQUENCE = /\x1b[\]P^_]/;
 
 // A bare \r (not immediately followed by \n) means the terminal is overwriting
 // the current line (shell prompts, progress bars). Highlighting mid-rewrite
@@ -254,11 +256,11 @@ function highlightPlainText(
   text: string,
   activePatterns: HighlightPattern[],
   activeSgr: string,
+  protectedRanges: ProtectedRange[],
 ): string {
   if (text.length > MAX_LINE_LENGTH || !text.trim()) return text;
 
   const matches: MatchResult[] = [];
-  const protectedRanges = getProtectedRanges(text);
 
   for (const pattern of activePatterns) {
     pattern.regex.lastIndex = 0;
@@ -376,15 +378,37 @@ function highlightLine(
   const bare = cr ? line.slice(0, -1) : line;
 
   if (!bare.trim()) return line;
+  if (bare.length > MAX_LINE_LENGTH) return line;
   if (isShellPromptLine(bare)) return line;
 
+  // Compute protected ranges (e.g. SSH bracket headings) against the fully
+  // stripped line rather than per-ANSI-segment text. A colored prompt theme
+  // (e.g. "[<color>user<reset>@<color>host<reset>]") splits the heading across
+  // multiple plain-text segments, so matching per-segment would miss it and
+  // let a username like "warning" get wrongly highlighted as a log level.
+  const plainLine = bare.replace(STRIP_ANSI_RE, "");
+  const lineProtectedRanges = getProtectedRanges(plainLine);
+
   const segments = parseAnsiSegments(bare);
+  let plainOffset = 0;
   const result = segments
-    .map((s) =>
-      s.isAnsi
-        ? s.content
-        : highlightPlainText(s.content, activePatterns, s.activeSgr ?? ""),
-    )
+    .map((s) => {
+      if (s.isAnsi) return s.content;
+      const segmentStart = plainOffset;
+      plainOffset += s.content.length;
+      const localRanges = lineProtectedRanges
+        .map((r) => ({
+          start: r.start - segmentStart,
+          end: r.end - segmentStart,
+        }))
+        .filter((r) => r.start < s.content.length && r.end > 0);
+      return highlightPlainText(
+        s.content,
+        activePatterns,
+        s.activeSgr ?? "",
+        localRanges,
+      );
+    })
     .join("");
 
   return cr ? result + "\r" : result;
@@ -398,6 +422,8 @@ export function highlightTerminalOutput(
   if (hasIncompleteAnsiSequence(text)) return text;
 
   if (TUI_SEQUENCE.test(text)) return text;
+  if (TUI_FRAME_SEQUENCE.test(text)) return text;
+  if (CONTROL_STRING_SEQUENCE.test(text)) return text;
   if (MID_LINE_CR.test(text)) return text;
 
   const activePatterns = buildActivePatterns(options);

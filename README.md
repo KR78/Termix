@@ -8,19 +8,19 @@
 
 <p>
   English ·
-  <a href="readme/README-CN.md">中文</a> ·
-  <a href="readme/README-JA.md">日本語</a> ·
-  <a href="readme/README-KO.md">한국어</a> ·
-  <a href="readme/README-FR.md">Français</a> ·
-  <a href="readme/README-DE.md">Deutsch</a> ·
-  <a href="readme/README-ES.md">Español</a> ·
-  <a href="readme/README-PT.md">Português</a> ·
-  <a href="readme/README-RU.md">Русский</a> ·
-  <a href="readme/README-AR.md">العربية</a> ·
-  <a href="readme/README-HI.md">हिन्दी</a> ·
-  <a href="readme/README-TR.md">Türkçe</a> ·
-  <a href="readme/README-VI.md">Tiếng Việt</a> ·
-  <a href="readme/README-IT.md">Italiano</a>
+  <a href="docs/readme/README-CN.md">中文</a> ·
+  <a href="docs/readme/README-JA.md">日本語</a> ·
+  <a href="docs/readme/README-KO.md">한국어</a> ·
+  <a href="docs/readme/README-FR.md">Français</a> ·
+  <a href="docs/readme/README-DE.md">Deutsch</a> ·
+  <a href="docs/readme/README-ES.md">Español</a> ·
+  <a href="docs/readme/README-PT.md">Português</a> ·
+  <a href="docs/readme/README-RU.md">Русский</a> ·
+  <a href="docs/readme/README-AR.md">العربية</a> ·
+  <a href="docs/readme/README-HI.md">हिन्दी</a> ·
+  <a href="docs/readme/README-TR.md">Türkçe</a> ·
+  <a href="docs/readme/README-VI.md">Tiếng Việt</a> ·
+  <a href="docs/readme/README-IT.md">Italiano</a>
 </p>
 
 <p>
@@ -31,21 +31,23 @@
   <a href="https://donate.termix.site/"><img alt="Donate" src="https://img.shields.io/badge/Donate-Support%20Termix-F39044?style=flat&labelColor=1a1a1a" /></a>
 </p>
 
+<p>
+  <a href="https://donate.termix.site/"><img alt="Donations this month" src="https://img.shields.io/badge/dynamic/json?style=for-the-badge&label=Donations%20this%20month&query=%24.fiatTotal&prefix=%24&url=https%3A%2F%2Ftermix.site%2Fdonation-snapshot.json&color=F39044&labelColor=1a1a1a" /></a>
+</p>
+
 <br />
 
 Termix is free and open source. If you find it useful, consider [donating](https://donate.termix.site/) to help cover server costs and development time.
 
-<a href="https://donate.termix.site/"><img src="https://raw.githubusercontent.com/Termix-SSH/Termix/badges/donation-goal.svg" alt="Monthly donation goal" /></a>
-
 <br />
 
-<img src="./repo-images/Termix Header.png" alt="Termix Banner" width="900" />
+<img src="./docs/repo-images/Termix Header.png" alt="Termix Banner" width="900" />
 
 <br />
 <br />
 
 <p>
-  <img src="repo-images/Repo of the Day.png" alt="Repo of the Day Achievement" width="280" />
+  <img src="docs/repo-images/Repo of the Day.png" alt="Repo of the Day Achievement" width="280" />
   <br />
   <sub>Achieved on September 1st, 2025</sub>
 </p>
@@ -115,7 +117,7 @@ View CPU, memory, disk usage, network, uptime, system information, firewall, por
 <td width="50%" valign="top">
 
 **User Authentication:**
-Secure user management with admin controls and OIDC/LDAP/SSO (with access control), 2FA (TOTP), and passkey (WebAuthn) support. View active user sessions across all platforms and revoke permissions. Link your OIDC/Local accounts together. View audit log of all users actions.
+Secure user management with admin controls (can edit other users information) and OIDC/LDAP/SSO (with access control), 2FA (TOTP), and passkey (WebAuthn) support. View active user sessions across all platforms and revoke permissions. Link your OIDC/Local accounts together. View audit log of all users actions.
 
 </td>
 </tr>
@@ -128,8 +130,8 @@ List devices from your tailnet to quickly add them as hosts, and connect using T
 </td>
 <td width="50%" valign="top">
 
-**RBAC:**
-Create roles and share hosts across users/roles.
+**RBAC/Sharing:**
+Create roles and share hosts across users/roles. Supports all auth types and all host protocols.
 
 </td>
 </tr>
@@ -186,6 +188,20 @@ SSH sessions and tabs stay open across devices/refreshes if enabled in user prof
 
 **Languages:**
 Built-in support ~30 languages (managed by [Crowdin](https://docs.termix.site/translations)).
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Session Sharing:**
+Share a live terminal, RDP, VNC, or Telnet session with others in real time. Share via a link (joined anonymously, no account needed) or with a specific Termix user, and choose read-only or read-write access. Shares can expire automatically or be revoked at any time, and session sharing can be toggled globally or per-host.
+
+</td>
+<td width="50%" valign="top">
+
+**Desktop Standalone + 2-Way Sync:**
+The Electron desktop app runs fully standalone with its own local backend and database, no server required. Optionally connect it to a remote Termix server for automatic two-way sync of hosts, credentials, snippets, and more, and choose whether SSH connections are started locally or through the remote server.
 
 </td>
 </tr>
@@ -291,75 +307,25 @@ networks:
 
 <br />
 
+## Telemetry
+
+Termix sends a small anonymous usage ping once every 24 hours to help understand how many instances are running and which features are actually used. This only includes a randomly generated instance ID, a count of users and hosts, the app version, and whether certain features (terminal, file manager, tunnels, docker, etc.) were used in the last 24 hours. It never includes usernames, hostnames, IP addresses, credentials, or any other identifying or connection data.
+
+This is opt-out and enabled by default. You can disable it at any time in Admin Settings under **General**.
+
+<br />
+
 ## Donate
 
-Termix is free and open source with no subscriptions or paid plans. If you find it useful, consider donating to help cover server costs, domains, and development time.
+Termix is free and open source with no subscriptions or paid plans. If you find it useful, consider donating to help cover server costs, domains, and development time. Donations also help fund the time to research and learn what's needed to build features like SAML, Kubernetes, and Agent support. Track progress and donate below.
 
 [Donate](https://donate.termix.site/)
 
 <br />
 
-## Screenshots
-
-<div align="center">
-
-<br />
-
-[![YouTube](./repo-images/YouTube.png)](https://www.youtube.com/@TermixSSH/videos)
-
-<sub>Watch update overviews on YouTube</sub>
-
-<br />
-<br />
-
-<table>
-<tr>
-<td><img src="./repo-images/Image 1.png" alt="Termix Screenshot 1" width="400" /></td>
-<td><img src="./repo-images/Image 2.png" alt="Termix Screenshot 2" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 3.png" alt="Termix Screenshot 3" width="400" /></td>
-<td><img src="./repo-images/Image 4.png" alt="Termix Screenshot 4" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 5.png" alt="Termix Screenshot 5" width="400" /></td>
-<td><img src="./repo-images/Image 6.png" alt="Termix Screenshot 6" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 7.png" alt="Termix Screenshot 7" width="400" /></td>
-<td><img src="./repo-images/Image 8.png" alt="Termix Screenshot 8" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 9.png" alt="Termix Screenshot 9" width="400" /></td>
-<td><img src="./repo-images/Image 10.png" alt="Termix Screenshot 10" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 11.png" alt="Termix Screenshot 11" width="400" /></td>
-<td><img src="./repo-images/Image 12.png" alt="Termix Screenshot 12" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 13.png" alt="Termix Screenshot 13" width="400" /></td>
-<td><img src="./repo-images/Image 14.png" alt="Termix Screenshot 14" width="400" /></td>
-</tr>
-<tr>
-<td><img src="./repo-images/Image 15.png" alt="Termix Screenshot 15" width="400" /></td>
-<td><img src="./repo-images/Image 16.png" alt="Termix Screenshot 16" width="400" /></td>
-</tr>
-</table>
-
-<sub>Some videos and images may be out of date or may not perfectly showcase features.</sub>
-
-</div>
-
-<br />
-
-## Planned Features
-
-See [Projects](https://github.com/orgs/Termix-SSH/projects/5) for all planned features. If you are looking to contribute, see [Contributing](https://github.com/Termix-SSH/Termix/blob/main/CONTRIBUTING.md).
-
-<br />
-
 ## Sponsors
+
+Interested in a paid placement to support development? Email [mail@termix.site](mailto:mail@termix.site).
 
 <div align="center">
 
@@ -394,7 +360,7 @@ See [Projects](https://github.com/orgs/Termix-SSH/projects/5) for all planned fe
 </a>
 &nbsp;&nbsp;&nbsp;
 <a href="https://rackgenius.com/">
-  <img src="https://rackgenius.com/rackgenius-logo.png" height="40" alt="AWS" />
+  <img src="https://rackgenius.com/rackgenius-logo.png" height="40" alt="Rack Genius" />
 </a>
 
 </div>
@@ -404,6 +370,66 @@ See [Projects](https://github.com/orgs/Termix-SSH/projects/5) for all planned fe
 ## Support
 
 If you need help or want to request a feature with Termix, visit the [Issues](https://github.com/Termix-SSH/Support/issues) page, log in, and press `New Issue`. Please be as detailed as possible in your issue, preferably written in English. You can also join the [Discord](https://discord.gg/jVQGdvHDrf) server and visit the support channel, however, response times may be longer.
+
+<br />
+
+## Screenshots
+
+<div align="center">
+
+<br />
+
+[![YouTube](./docs/repo-images/YouTube.png)](https://www.youtube.com/@TermixSSH/videos)
+
+<sub>Watch update overviews on YouTube</sub>
+
+<br />
+<br />
+
+<table>
+<tr>
+<td><img src="./docs/repo-images/Image 1.png" alt="Termix Screenshot 1" width="400" /></td>
+<td><img src="./docs/repo-images/Image 2.png" alt="Termix Screenshot 2" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 3.png" alt="Termix Screenshot 3" width="400" /></td>
+<td><img src="./docs/repo-images/Image 4.png" alt="Termix Screenshot 4" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 5.png" alt="Termix Screenshot 5" width="400" /></td>
+<td><img src="./docs/repo-images/Image 6.png" alt="Termix Screenshot 6" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 7.png" alt="Termix Screenshot 7" width="400" /></td>
+<td><img src="./docs/repo-images/Image 8.png" alt="Termix Screenshot 8" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 9.png" alt="Termix Screenshot 9" width="400" /></td>
+<td><img src="./docs/repo-images/Image 10.png" alt="Termix Screenshot 10" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 11.png" alt="Termix Screenshot 11" width="400" /></td>
+<td><img src="./docs/repo-images/Image 12.png" alt="Termix Screenshot 12" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 13.png" alt="Termix Screenshot 13" width="400" /></td>
+<td><img src="./docs/repo-images/Image 14.png" alt="Termix Screenshot 14" width="400" /></td>
+</tr>
+<tr>
+<td><img src="./docs/repo-images/Image 15.png" alt="Termix Screenshot 15" width="400" /></td>
+<td><img src="./docs/repo-images/Image 16.png" alt="Termix Screenshot 16" width="400" /></td>
+</tr>
+</table>
+
+<sub>Some videos and images may be out of date or may not perfectly showcase features.</sub>
+
+</div>
+
+<br />
+
+## Planned Features
+
+See [Projects](https://github.com/orgs/Termix-SSH/projects/5) for all planned features. If you are looking to contribute, see [Contributing](https://github.com/Termix-SSH/Termix/blob/main/CONTRIBUTING.md).
 
 <br />
 

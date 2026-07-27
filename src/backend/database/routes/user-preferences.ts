@@ -1,17 +1,20 @@
 import type { AuthenticatedRequest } from "../../../types/index.js";
 import express from "express";
-import { db } from "../db/index.js";
-import { userPreferences } from "../db/schema.js";
-import { eq } from "drizzle-orm";
 import type { Request, Response } from "express";
 import { databaseLogger } from "../../utils/logger.js";
 import { AuthManager } from "../../utils/auth-manager.js";
+import { createCurrentUserPreferenceRepository } from "../repositories/factory.js";
+import type {
+  UserPreferenceRecord,
+  UserPreferenceUpdate,
+} from "../repositories/user-preference-repository.js";
+import { isValidKeybinding } from "./keybinding-validation.js";
 
 const router = express.Router();
 const authManager = AuthManager.getInstance();
 const authenticateJWT = authManager.createAuthMiddleware();
 
-const pickPreferences = (row?: typeof userPreferences.$inferSelect) => ({
+const pickPreferences = (row?: UserPreferenceRecord | null) => ({
   reopenTabsOnLogin: row?.reopenTabsOnLogin ?? false,
   theme: row?.theme ?? null,
   fontSize: row?.fontSize ?? null,
@@ -31,6 +34,8 @@ const pickPreferences = (row?: typeof userPreferences.$inferSelect) => ({
   hiddenRailTabs: row?.hiddenRailTabs ?? null,
   compactHostView: row?.compactHostView ?? null,
   statusColorScheme: row?.statusColorScheme ?? null,
+  customThemes: row?.customThemes ?? null,
+  customKeybindings: row?.customKeybindings ?? null,
 });
 
 /**
@@ -104,17 +109,22 @@ const pickPreferences = (row?: typeof userPreferences.$inferSelect) => ({
  *                 statusColorScheme:
  *                   type: string
  *                   nullable: true
+ *                 customThemes:
+ *                   type: string
+ *                   nullable: true
+ *                   description: JSON-encoded array of the user's saved global custom terminal themes.
+ *                 customKeybindings:
+ *                   type: string
+ *                   nullable: true
+ *                   description: JSON-encoded array of the user's custom terminal keybindings.
  */
-router.get("/", authenticateJWT, (req: Request, res: Response) => {
+router.get("/", authenticateJWT, async (req: Request, res: Response) => {
   const userId = (req as AuthenticatedRequest).userId;
   try {
-    const rows = db
-      .select()
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .all();
+    const preferences =
+      await createCurrentUserPreferenceRepository().findByUserId(userId);
 
-    return res.json(pickPreferences(rows[0]));
+    return res.json(pickPreferences(preferences));
   } catch (e) {
     databaseLogger.error("Failed to get user preferences", e, {
       operation: "get_user_preferences",
@@ -176,11 +186,17 @@ router.get("/", authenticateJWT, (req: Request, res: Response) => {
  *                 type: boolean
  *               statusColorScheme:
  *                 type: string
+ *               customThemes:
+ *                 type: string
+ *                 description: JSON-encoded array of the user's saved global custom terminal themes.
+ *               customKeybindings:
+ *                 type: string
+ *                 description: JSON-encoded array of the user's custom terminal keybindings.
  *     responses:
  *       200:
  *         description: Preferences updated successfully.
  */
-router.put("/", authenticateJWT, (req: Request, res: Response) => {
+router.put("/", authenticateJWT, async (req: Request, res: Response) => {
   const userId = (req as AuthenticatedRequest).userId;
   const {
     reopenTabsOnLogin,
@@ -202,6 +218,8 @@ router.put("/", authenticateJWT, (req: Request, res: Response) => {
     hiddenRailTabs,
     compactHostView,
     statusColorScheme,
+    customThemes,
+    customKeybindings,
   } = req.body as {
     reopenTabsOnLogin?: boolean;
     theme?: string | null;
@@ -222,9 +240,11 @@ router.put("/", authenticateJWT, (req: Request, res: Response) => {
     hiddenRailTabs?: string | null;
     compactHostView?: boolean | null;
     statusColorScheme?: string | null;
+    customThemes?: string | null;
+    customKeybindings?: string | null;
   };
 
-  const updates: Partial<typeof userPreferences.$inferInsert> = {
+  const updates: UserPreferenceUpdate = {
     updatedAt: new Date().toISOString(),
   };
 
@@ -245,9 +265,61 @@ router.put("/", authenticateJWT, (req: Request, res: Response) => {
     storageMode,
     hiddenRailTabs,
     statusColorScheme,
+    customThemes,
+    customKeybindings,
   })) {
     if (value !== undefined && value !== null && typeof value !== "string") {
       return res.status(400).json({ error: `${key} must be a string` });
+    }
+  }
+
+  if (customThemes !== undefined && customThemes !== null) {
+    let parsedThemes: unknown;
+    try {
+      parsedThemes = JSON.parse(customThemes);
+    } catch {
+      return res
+        .status(400)
+        .json({ error: "customThemes must be a JSON-encoded array" });
+    }
+    if (!Array.isArray(parsedThemes) || parsedThemes.length > 100) {
+      return res.status(400).json({
+        error: "customThemes must be a JSON array of at most 100 themes",
+      });
+    }
+    const isValidTheme = (entry: unknown): boolean =>
+      !!entry &&
+      typeof entry === "object" &&
+      typeof (entry as { id?: unknown }).id === "string" &&
+      typeof (entry as { name?: unknown }).name === "string" &&
+      !!(entry as { colors?: unknown }).colors &&
+      typeof (entry as { colors?: unknown }).colors === "object";
+    if (!parsedThemes.every(isValidTheme)) {
+      return res.status(400).json({
+        error: "Each custom theme must have an id, name, and colors object",
+      });
+    }
+  }
+
+  if (customKeybindings !== undefined && customKeybindings !== null) {
+    let parsedKeybindings: unknown;
+    try {
+      parsedKeybindings = JSON.parse(customKeybindings);
+    } catch {
+      return res
+        .status(400)
+        .json({ error: "customKeybindings must be a JSON-encoded array" });
+    }
+    if (!Array.isArray(parsedKeybindings) || parsedKeybindings.length > 200) {
+      return res.status(400).json({
+        error: "customKeybindings must be a JSON array of at most 200 bindings",
+      });
+    }
+    if (!parsedKeybindings.every(isValidKeybinding)) {
+      return res.status(400).json({
+        error:
+          "Each custom keybinding must have an id, enabled flag, valid combo, and valid action",
+      });
     }
   }
 
@@ -295,31 +367,16 @@ router.put("/", authenticateJWT, (req: Request, res: Response) => {
   if (compactHostView !== undefined) updates.compactHostView = compactHostView;
   if (statusColorScheme !== undefined)
     updates.statusColorScheme = statusColorScheme;
+  if (customThemes !== undefined) updates.customThemes = customThemes;
+  if (customKeybindings !== undefined)
+    updates.customKeybindings = customKeybindings;
 
   if (Object.keys(updates).length === 1) {
     return res.status(400).json({ error: "No preferences provided" });
   }
 
   try {
-    const existing = db
-      .select()
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .all();
-
-    if (existing.length === 0) {
-      db.insert(userPreferences)
-        .values({
-          userId,
-          ...updates,
-        })
-        .run();
-    } else {
-      db.update(userPreferences)
-        .set(updates)
-        .where(eq(userPreferences.userId, userId))
-        .run();
-    }
+    await createCurrentUserPreferenceRepository().upsert(userId, updates);
 
     return res.json({ success: true, ...updates });
   } catch (e) {

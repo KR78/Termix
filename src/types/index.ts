@@ -70,9 +70,23 @@ export type GuacamoleAuthType = "password" | "credential";
 
 export interface ProxmoxConfig {
   defaultCredentialId: number | null;
+  defaultAuthType?: string;
   windowsPatterns: string;
   dockerPatterns: string;
   preferredPrefixes: string;
+  autoSyncEnabled?: boolean;
+  syncIntervalMinutes?: number;
+  markMissingGuests?: boolean;
+  lastSyncAt?: string;
+  lastSyncStatus?: "success" | "error";
+  lastSyncError?: string | null;
+  lastSyncResult?: {
+    created: number;
+    updated: number;
+    markedMissing: number;
+    skipped: number;
+    errors: string[];
+  };
 }
 
 export interface HostFeatureFlags {
@@ -109,7 +123,8 @@ export interface Host {
     | "none"
     | "opkssh"
     | "tailscale"
-    | "agent";
+    | "agent"
+    | "vault";
   useWarpgate?: boolean;
   password?: string;
   key?: string;
@@ -123,6 +138,8 @@ export interface Host {
   autostartKeyPassword?: string;
 
   credentialId?: number;
+  vaultProfileId?: number | null;
+  vaultProfile?: { id?: number | null };
   overrideCredentialUsername?: boolean;
   userId?: string;
   enableTerminal: boolean;
@@ -134,6 +151,7 @@ export interface Host {
   enableDocker: boolean;
   enableProxmox: boolean;
   enableTmuxMonitor: boolean;
+  allowSessionSharing?: boolean;
   proxmoxConfig?: ProxmoxConfig | null;
   showTerminalInSidebar: boolean;
   showFileManagerInSidebar: boolean;
@@ -190,7 +208,7 @@ export interface Host {
   telnetUser?: string;
   telnetPassword?: string;
   telnetCredentialId?: number | null;
-  rdpAuthType?: "direct" | "credential" | null;
+  rdpAuthType?: "direct" | "credential" | "none" | null;
   vncAuthType?: "direct" | "credential" | null;
   telnetAuthType?: "direct" | "credential" | null;
   createdAt: string;
@@ -200,8 +218,9 @@ export interface Host {
   hasKeyPassword?: boolean;
 
   isShared?: boolean;
-  permissionLevel?: "view";
+  permissionLevel?: "connect" | "view" | "edit" | "manage";
   sharedExpiresAt?: string;
+  ownerUsername?: string;
 }
 
 export interface JumpHostData {
@@ -239,7 +258,7 @@ export interface HostData {
     | "agent";
   useWarpgate?: boolean;
   password?: string;
-  key?: File | null;
+  key?: File | string | null;
   keyPassword?: string;
   keyType?: string;
   sudoPassword?: string;
@@ -254,6 +273,7 @@ export interface HostData {
   enableDocker?: boolean;
   enableProxmox?: boolean;
   enableTmuxMonitor?: boolean;
+  allowSessionSharing?: boolean;
   proxmoxConfig?: ProxmoxConfig | Record<string, unknown> | null;
   showTerminalInSidebar?: boolean;
   showFileManagerInSidebar?: boolean;
@@ -311,7 +331,7 @@ export interface HostData {
   telnetUser?: string;
   telnetPassword?: string;
   telnetCredentialId?: number | null;
-  rdpAuthType?: "direct" | "credential" | null;
+  rdpAuthType?: "direct" | "credential" | "none" | null;
   vncAuthType?: "direct" | "credential" | null;
   telnetAuthType?: "direct" | "credential" | null;
 }
@@ -325,6 +345,7 @@ export interface SSHFolder {
   name: string;
   color?: string;
   icon?: string;
+  credentialId?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -952,6 +973,8 @@ export type PartialExcept<T, K extends keyof T> = Partial<T> & Pick<T, K>;
 export interface AuthenticatedRequest extends Request {
   userId: string;
   sessionId?: string;
+  apiKeyId?: string;
+  actingAdminUserId?: string;
   user?: {
     id: string;
     username: string;

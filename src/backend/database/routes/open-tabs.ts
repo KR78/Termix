@@ -1,12 +1,14 @@
 import type { AuthenticatedRequest } from "../../../types/index.js";
 import express from "express";
-import { db } from "../db/index.js";
-import { userOpenTabs } from "../db/schema.js";
-import { eq, and, sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 import { databaseLogger } from "../../utils/logger.js";
 import { AuthManager } from "../../utils/auth-manager.js";
-import { sessionManager } from "../../ssh/terminal-session-manager.js";
+import { sessionManager } from "../../hosts/terminal/session-manager.js";
+import {
+  getCurrentSettingValue,
+  createCurrentOpenTabRepository,
+  createCurrentSessionShareRepository,
+} from "../repositories/factory.js";
 
 const router = express.Router();
 const authManager = AuthManager.getInstance();
@@ -27,13 +29,9 @@ const DEFAULT_TAB_TTL_MINUTES = 30;
 
 function getTabTtlMs(): number {
   try {
-    const row = db.$client
-      .prepare(
-        "SELECT value FROM settings WHERE key = 'terminal_session_timeout_minutes'",
-      )
-      .get() as { value: string } | undefined;
-    if (row) {
-      const minutes = parseInt(row.value, 10);
+    const value = getCurrentSettingValue("terminal_session_timeout_minutes");
+    if (value) {
+      const minutes = parseInt(value, 10);
       if (!isNaN(minutes) && minutes > 0) return minutes * 60_000;
     }
   } catch {
@@ -56,17 +54,10 @@ router.get("/", authenticateJWT, async (req: Request, res: Response) => {
   const userId = (req as AuthenticatedRequest).userId;
   try {
     const cutoff = new Date(Date.now() - getTabTtlMs()).toISOString();
-    const tabs = db
-      .select()
-      .from(userOpenTabs)
-      .where(
-        and(
-          eq(userOpenTabs.userId, userId),
-          sql`${userOpenTabs.updatedAt} > ${cutoff}`,
-        ),
-      )
-      .orderBy(userOpenTabs.tabOrder)
-      .all();
+    const tabs = await createCurrentOpenTabRepository().listRecentForUser(
+      userId,
+      cutoff,
+    );
     return res.json(
       tabs.map((tab) => ({ ...tab, tabType: normalizeTabType(tab.tabType) })),
     );
@@ -131,43 +122,14 @@ router.post("/", authenticateJWT, async (req: Request, res: Response) => {
   }
 
   try {
-    const now = new Date().toISOString();
-    const existing = db
-      .select()
-      .from(userOpenTabs)
-      .where(and(eq(userOpenTabs.id, id), eq(userOpenTabs.userId, userId)))
-      .all();
-    if (existing.length > 0) {
-      // Preserve existing backendSessionId when not explicitly provided
-      const sessionId =
-        backendSessionId !== undefined
-          ? backendSessionId
-          : existing[0].backendSessionId;
-      db.update(userOpenTabs)
-        .set({
-          tabType,
-          hostId: hostId ?? null,
-          label,
-          tabOrder,
-          backendSessionId: sessionId ?? null,
-          updatedAt: now,
-        })
-        .where(and(eq(userOpenTabs.id, id), eq(userOpenTabs.userId, userId)))
-        .run();
-    } else {
-      db.insert(userOpenTabs)
-        .values({
-          id,
-          userId,
-          tabType,
-          hostId: hostId ?? null,
-          label,
-          tabOrder,
-          backendSessionId: backendSessionId ?? null,
-          updatedAt: now,
-        })
-        .run();
-    }
+    await createCurrentOpenTabRepository().upsertForUser(userId, {
+      id,
+      tabType,
+      hostId,
+      label,
+      tabOrder,
+      backendSessionId,
+    });
     return res.json({ success: true });
   } catch (e) {
     databaseLogger.error("Failed to upsert open tab", e, {
@@ -217,24 +179,7 @@ router.put("/", authenticateJWT, async (req: Request, res: Response) => {
   }
 
   try {
-    db.delete(userOpenTabs).where(eq(userOpenTabs.userId, userId)).run();
-    if (tabs.length > 0) {
-      const now = new Date().toISOString();
-      db.insert(userOpenTabs)
-        .values(
-          tabs.map((t) => ({
-            id: t.id,
-            userId,
-            tabType: t.tabType,
-            hostId: t.hostId ?? null,
-            label: t.label,
-            tabOrder: t.tabOrder,
-            backendSessionId: t.backendSessionId ?? null,
-            updatedAt: now,
-          })),
-        )
-        .run();
-    }
+    await createCurrentOpenTabRepository().replaceForUser(userId, tabs);
     return res.json({ success: true });
   } catch (e) {
     databaseLogger.error("Failed to sync open tabs", e, {
@@ -274,13 +219,13 @@ router.patch("/:id", authenticateJWT, async (req: Request, res: Response) => {
   }>;
 
   try {
-    const result = db
-      .update(userOpenTabs)
-      .set({ ...updates, updatedAt: new Date().toISOString() })
-      .where(and(eq(userOpenTabs.id, id), eq(userOpenTabs.userId, userId)))
-      .run();
+    const updated = await createCurrentOpenTabRepository().updateForUser(
+      userId,
+      id,
+      updates,
+    );
 
-    if (result.changes === 0) {
+    if (!updated) {
       return res.status(404).json({ error: "Tab not found" });
     }
     return res.json({ success: true });
@@ -316,9 +261,7 @@ router.delete("/:id", authenticateJWT, async (req: Request, res: Response) => {
   const id = String(req.params.id);
 
   try {
-    db.delete(userOpenTabs)
-      .where(and(eq(userOpenTabs.id, id), eq(userOpenTabs.userId, userId)))
-      .run();
+    await createCurrentOpenTabRepository().deleteForUser(userId, id);
     return res.json({ success: true });
   } catch (e) {
     databaseLogger.error("Failed to delete open tab", e, {
@@ -335,12 +278,15 @@ router.delete("/:id", authenticateJWT, async (req: Request, res: Response) => {
  * /open-tabs/active-sessions:
  *   get:
  *     summary: Get all active backend sessions for the current user
- *     description: Returns live terminal sessions from the session manager. Used by the Active Connections panel and tab restore logic.
+ *     description: >
+ *       Returns live terminal sessions from the session manager, both sessions the
+ *       caller owns and SSH sessions shared to the caller by another user (via
+ *       an in-app session share). Used by the Active Connections panel and tab restore logic.
  *     tags:
  *       - Open Tabs
  *     responses:
  *       200:
- *         description: List of active sessions.
+ *         description: List of active sessions (own and shared-with-me).
  *         content:
  *           application/json:
  *             schema:
@@ -360,6 +306,17 @@ router.delete("/:id", authenticateJWT, async (req: Request, res: Response) => {
  *                     type: boolean
  *                   createdAt:
  *                     type: number
+ *                   isOwnSession:
+ *                     type: boolean
+ *                   sharedByUsername:
+ *                     type: string
+ *                     nullable: true
+ *                   permissionLevel:
+ *                     type: string
+ *                     nullable: true
+ *                   shareId:
+ *                     type: string
+ *                     nullable: true
  */
 router.get(
   "/active-sessions",
@@ -367,17 +324,46 @@ router.get(
   async (req: Request, res: Response) => {
     const userId = (req as AuthenticatedRequest).userId;
     try {
-      const sessions = sessionManager.getUserSessions(userId);
-      return res.json(
-        sessions.map((s) => ({
-          sessionId: s.id,
-          hostId: s.hostId,
-          hostName: s.hostName,
-          tabInstanceId: s.attachedTabInstanceId ?? s.tabInstanceId ?? null,
-          isConnected: s.isConnected,
-          createdAt: s.createdAt,
-        })),
-      );
+      const ownSessions = sessionManager.getUserSessions(userId);
+      const result = ownSessions.map((s) => ({
+        sessionId: s.id,
+        hostId: s.hostId,
+        hostName: s.hostName,
+        tabInstanceId: s.attachedTabInstanceId ?? s.tabInstanceId ?? null,
+        isConnected: s.isConnected,
+        createdAt: s.createdAt,
+        isOwnSession: true,
+        sharedByUsername: null as string | null,
+        permissionLevel: null as string | null,
+        shareId: null as string | null,
+      }));
+
+      const sharedWithMe =
+        await createCurrentSessionShareRepository().findSharesTargetingUser(
+          userId,
+        );
+      for (const share of sharedWithMe) {
+        if (share.protocol !== "ssh") continue;
+        const sharedSession = sessionManager.getSession(share.sessionId);
+        if (!sharedSession || !sharedSession.isConnected) continue;
+        result.push({
+          sessionId: sharedSession.id,
+          hostId: sharedSession.hostId,
+          hostName: sharedSession.hostName,
+          tabInstanceId:
+            sharedSession.attachedTabInstanceId ??
+            sharedSession.tabInstanceId ??
+            null,
+          isConnected: sharedSession.isConnected,
+          createdAt: sharedSession.createdAt,
+          isOwnSession: false,
+          sharedByUsername: share.ownerUsername,
+          permissionLevel: share.permissionLevel,
+          shareId: share.id,
+        });
+      }
+
+      return res.json(result);
     } catch (e) {
       databaseLogger.error("Failed to get active sessions", e, {
         operation: "get_active_sessions",

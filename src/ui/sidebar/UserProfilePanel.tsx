@@ -17,6 +17,7 @@ import {
   saveUserPreferences,
   getUserPreferences,
 } from "@/main-axios";
+import { getDatabaseTransferUrl } from "@/lib/database-transfer-url";
 import {
   deleteWebAuthnCredential,
   listWebAuthnCredentials,
@@ -27,6 +28,7 @@ import {
 import type { UserRole } from "@/main-axios";
 import type React from "react";
 import { isElectron } from "@/lib/electron";
+import { RemoteSyncPanel } from "@/settings/RemoteSyncPanel.tsx";
 import { C2STunnelPresetManager } from "@/user/C2STunnelPresetManager";
 import { Button } from "@/components/button";
 import { Input } from "@/components/input";
@@ -45,8 +47,10 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  Database,
   Eye,
   EyeOff,
+  Fingerprint,
   Hammer,
   KeyRound,
   LayoutPanelLeft,
@@ -68,6 +72,7 @@ import {
   Zap,
 } from "lucide-react";
 import { SettingRow, FakeSwitch } from "@/components/section-card";
+import { KeybindingsDialog } from "./KeybindingsDialog";
 import {
   ACCENT_PRESET_COLORS,
   applyAccentColor,
@@ -78,13 +83,14 @@ import type { ApiKey } from "@/main-axios";
 import { useTheme } from "@/components/theme-provider";
 import type { FontSizeId, ThemeId } from "@/types/ui-types";
 import { toast } from "sonner";
-import i18n from "@/i18n/i18n";
+import { changeAppLanguage, normalizeLanguageCode } from "@/i18n/i18n";
 
 type UserProfileSection =
   | "account"
   | "appearance"
   | "security"
   | "api-keys"
+  | "data"
   | "c2s-tunnels";
 
 const THEMES: { id: ThemeId; preview: string }[] = [
@@ -421,13 +427,13 @@ function PasswordChangeSection({
 export function UserProfilePanel({
   username,
   onLogout,
-  onChangeServer,
   userPrefs,
   onPrefsChange,
+  remoteSyncInitialServerUrl,
 }: {
   username?: string;
   onLogout?: () => void;
-  onChangeServer?: () => void;
+  remoteSyncInitialServerUrl?: string;
   userPrefs?: {
     reopenTabsOnLogin: boolean;
     storageMode?: string | null;
@@ -445,7 +451,10 @@ export function UserProfilePanel({
     hiddenRailTabs?: string | null;
     statusColorScheme?: string | null;
   };
-  onPrefsChange?: (prefs: { reopenTabsOnLogin: boolean }) => void;
+  onPrefsChange?: (prefs: {
+    reopenTabsOnLogin?: boolean;
+    storageMode?: "local" | "cloud";
+  }) => void;
 }) {
   const { t } = useTranslation();
   const themeLabel: Record<ThemeId, string> = {
@@ -460,8 +469,8 @@ export function UserProfilePanel({
     "one-dark": t("newUi.sidebar.userProfile.themeOneDark"),
     gruvbox: t("newUi.sidebar.userProfile.themeGruvbox"),
   };
-  const [openSection, setOpenSection] = useState<UserProfileSection | null>(
-    "account",
+  const [openSections, setOpenSections] = useState<Set<UserProfileSection>>(
+    () => new Set(["account"]),
   );
 
   // User info
@@ -498,6 +507,11 @@ export function UserProfilePanel({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Data export/import
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+
   // UI state
   const [showPassword, setShowPassword] = useState(false);
   const [newKeyOpen, setNewKeyOpen] = useState(false);
@@ -515,12 +529,58 @@ export function UserProfilePanel({
   const [fontSize, setFontSize] = useState<FontSizeId>(
     () => (localStorage.getItem("termix-font-size") as FontSizeId) ?? "md",
   );
-  const [language, setLanguage] = useState(
-    () => localStorage.getItem("i18nextLng") ?? "en",
+  const [language, setLanguage] = useState(() =>
+    normalizeLanguageCode(localStorage.getItem("i18nextLng")),
   );
   const [storageMode, setStorageMode] = useState<"local" | "cloud">(() =>
     userPrefs?.storageMode === "cloud" ? "cloud" : "local",
   );
+
+  useEffect(() => {
+    if (userPrefs?.storageMode) {
+      setStorageMode(userPrefs.storageMode === "cloud" ? "cloud" : "local");
+    }
+  }, [userPrefs?.storageMode]);
+
+  // Remote sync is not connected by default on the desktop app (it's an
+  // opt-in feature configured from this same panel). "cloud" storage mode
+  // and Termix ID both assume a real multi-device server account, so they
+  // stay hidden/forced-off until the user actually connects one.
+  const [isRemoteSyncConnected, setIsRemoteSyncConnected] = useState(
+    () => !isElectron(),
+  );
+
+  useEffect(() => {
+    if (!isElectron()) return;
+    let cancelled = false;
+    const refreshSyncStatus = () => {
+      window.electronAPI
+        ?.invoke?.("get-remote-sync-config")
+        .then((config) => {
+          if (!cancelled) {
+            setIsRemoteSyncConnected(
+              !!(config as { serverUrl?: string } | null)?.serverUrl,
+            );
+          }
+        })
+        .catch(() => {});
+    };
+    refreshSyncStatus();
+    const unsubscribe = window.electronAPI?.onRemoteSyncStatusChanged?.(() =>
+      refreshSyncStatus(),
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isElectron() && !isRemoteSyncConnected && storageMode === "cloud") {
+      setStorageMode("local");
+      onPrefsChange?.({ storageMode: "local" });
+    }
+  }, [isRemoteSyncConnected, storageMode, onPrefsChange]);
 
   // Settings toggles — all backed by localStorage
   const [commandAutocomplete, setCommandAutocomplete] = useState(
@@ -533,12 +593,13 @@ export function UserProfilePanel({
     const v = localStorage.getItem("commandPaletteShortcutEnabled");
     return v !== null ? v === "true" : true;
   });
+  const [keybindingsDialogOpen, setKeybindingsDialogOpen] = useState(false);
   const [showHostTags, setShowHostTags] = useState(() => {
     const v = localStorage.getItem("showHostTags");
     return v !== null ? v === "true" : true;
   });
   const [hostTrayOnClick, setHostTrayOnClick] = useState(
-    () => localStorage.getItem("hostTrayOnClick") === "true",
+    () => localStorage.getItem("hostTrayOnClick") !== "false",
   );
   const [compactHostView, setCompactHostView] = useState(
     () => localStorage.getItem("compactHostView") === "true",
@@ -623,6 +684,7 @@ export function UserProfilePanel({
 
   async function handleStorageModeChange(mode: "local" | "cloud") {
     setStorageMode(mode);
+    onPrefsChange?.({ storageMode: mode });
     if (mode === "cloud") {
       // Snapshot current browser localStorage values so any tab can restore them later
       const SNAPSHOT_KEYS = [
@@ -662,9 +724,8 @@ export function UserProfilePanel({
           applyAccentColor(prefs.accentColor);
         }
         if (prefs.language) {
-          setLanguage(prefs.language);
-          localStorage.setItem("i18nextLng", prefs.language);
-          void i18n.changeLanguage(prefs.language);
+          const language = await changeAppLanguage(prefs.language);
+          setLanguage(language);
         }
         if (prefs.commandAutocomplete != null) {
           setCommandAutocomplete(prefs.commandAutocomplete);
@@ -772,8 +833,7 @@ export function UserProfilePanel({
     localStorage.setItem("termix-accent", DEFAULT_ACCENT);
     applyAccentColor(DEFAULT_ACCENT);
     setLanguage("en");
-    localStorage.setItem("i18nextLng", "en");
-    void i18n.changeLanguage("en");
+    void changeAppLanguage("en");
     setCommandAutocomplete(false);
     localStorage.setItem("commandAutocomplete", "false");
     setCommandPaletteEnabled(true);
@@ -781,8 +841,8 @@ export function UserProfilePanel({
     setShowHostTags(true);
     localStorage.setItem("showHostTags", "true");
     window.dispatchEvent(new CustomEvent("showHostTagsChanged"));
-    setHostTrayOnClick(false);
-    localStorage.setItem("hostTrayOnClick", "false");
+    setHostTrayOnClick(true);
+    localStorage.setItem("hostTrayOnClick", "true");
     setCompactHostView(false);
     localStorage.setItem("compactHostView", "false");
     window.dispatchEvent(new CustomEvent("compactHostViewChanged"));
@@ -815,7 +875,7 @@ export function UserProfilePanel({
         commandAutocomplete: false,
         commandPaletteEnabled: true,
         showHostTags: true,
-        hostTrayOnClick: false,
+        hostTrayOnClick: true,
         compactHostView: false,
         pinAppRail: false,
         expandAppRailOnHover: true,
@@ -862,10 +922,9 @@ export function UserProfilePanel({
     localStorage.setItem("termix-accent", restoredAccent);
     applyAccentColor(restoredAccent);
 
-    const restoredLang = restore("i18nextLng", "en") ?? "en";
+    const restoredLang = normalizeLanguageCode(restore("i18nextLng", "en"));
     setLanguage(restoredLang);
-    localStorage.setItem("i18nextLng", restoredLang);
-    void i18n.changeLanguage(restoredLang);
+    void changeAppLanguage(restoredLang);
 
     const restoredAutocomplete =
       restore("commandAutocomplete", "false") === "true";
@@ -885,7 +944,7 @@ export function UserProfilePanel({
     localStorage.setItem("showHostTags", String(restoredHostTags));
     window.dispatchEvent(new CustomEvent("showHostTagsChanged"));
 
-    const restoredTrayOnClick = restore("hostTrayOnClick", "false") === "true";
+    const restoredTrayOnClick = restore("hostTrayOnClick", "true") !== "false";
     setHostTrayOnClick(restoredTrayOnClick);
     localStorage.setItem("hostTrayOnClick", String(restoredTrayOnClick));
 
@@ -984,14 +1043,21 @@ export function UserProfilePanel({
   }
 
   function handleLanguageChange(code: string) {
-    setLanguage(code);
-    localStorage.setItem("i18nextLng", code);
-    i18n.changeLanguage(code);
-    if (storageMode === "cloud") saveToCloud({ language: code });
+    void changeAppLanguage(code)
+      .then((language) => {
+        setLanguage(language);
+        if (storageMode === "cloud") saveToCloud({ language });
+      })
+      .catch(() => {});
   }
 
   function toggle(id: UserProfileSection) {
-    setOpenSection((prev) => (prev === id ? null : id));
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   async function handleStartTotpSetup() {
@@ -1114,6 +1180,114 @@ export function UserProfilePanel({
     }
   }
 
+  async function handleExportData() {
+    setExportLoading(true);
+    try {
+      const apiUrl = getDatabaseTransferUrl("export", {
+        electron: isElectron(),
+        configuredServerUrl: null,
+        location: window.location,
+      });
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const contentDisposition = response.headers.get("content-disposition");
+        const filename =
+          contentDisposition?.match(/filename="([^"]+)"/)?.[1] ||
+          "termix-export.sqlite";
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        toast.success(t("newUi.sidebar.userProfile.exportSuccess"));
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || t("newUi.sidebar.userProfile.exportFailed"));
+      }
+    } catch {
+      toast.error(t("newUi.sidebar.userProfile.exportFailed"));
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  async function handleImportData() {
+    if (!importFile) {
+      toast.error(t("newUi.sidebar.userProfile.importSelectFile"));
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const apiUrl = getDatabaseTransferUrl("import", {
+        electron: isElectron(),
+        configuredServerUrl: null,
+        location: window.location,
+      });
+
+      const formData = new FormData();
+      formData.append("file", importFile);
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          const s = result.summary;
+          const total =
+            (s.sshHostsImported || 0) +
+            (s.sshCredentialsImported || 0) +
+            (s.fileManagerItemsImported || 0) +
+            (s.dismissedAlertsImported || 0) +
+            (s.settingsImported || 0);
+          toast.success(
+            t("newUi.sidebar.userProfile.importCompleted", {
+              total,
+              skipped: s.skippedItems || 0,
+            }),
+          );
+          setImportFile(null);
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          toast.error(
+            t("newUi.sidebar.userProfile.importFailed", {
+              error: result.summary?.errors?.join(", ") || "Unknown error",
+            }),
+          );
+        }
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(
+          t("newUi.sidebar.userProfile.importFailed", {
+            error: err.error || "Unknown error",
+          }),
+        );
+      }
+    } catch {
+      toast.error(
+        t("newUi.sidebar.userProfile.importFailed", {
+          error: "Unknown error",
+        }),
+      );
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
   const canChangePasword = !isOidc || isDualAuth;
 
   return (
@@ -1125,51 +1299,76 @@ export function UserProfilePanel({
         userId={userId}
       />
 
-      {/* Storage mode toggle */}
-      <div className="border border-border bg-card px-3 py-2.5 flex flex-col gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-          {t("newUi.sidebar.userProfile.storageModeSwitch")}
-        </span>
-        <div className="flex border border-border overflow-hidden w-full">
-          <button
-            onClick={() => handleStorageModeChange("local")}
-            className={`flex-1 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${
-              storageMode === "local"
-                ? "bg-accent-brand text-white"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
-            }`}
-          >
-            {t("newUi.sidebar.userProfile.storageModeLocal")}
-          </button>
-          <button
-            onClick={() => handleStorageModeChange("cloud")}
-            className={`flex-1 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${
-              storageMode === "cloud"
-                ? "bg-accent-brand text-white"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
-            }`}
-          >
-            {t("newUi.sidebar.userProfile.storageModeCloud")}
-          </button>
+      {/* Donate banner */}
+      <div className="border border-accent-brand/40 bg-accent-brand/10 px-3 py-2.5 flex flex-col gap-1.5">
+        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-accent-brand">
+          {t("newUi.sidebar.userProfile.donateTitle")}
         </div>
         <p className="text-[10px] text-muted-foreground leading-relaxed">
-          {t("newUi.sidebar.userProfile.storageModeDescription")}
+          {t("newUi.sidebar.userProfile.donateDescription")}
         </p>
-        <button
-          onClick={resetToDefaults}
-          className="self-start flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          {t("newUi.sidebar.userProfile.donateMilestones")}
+        </p>
+        <a
+          href="https://donate.termix.site/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="self-start flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest bg-accent-brand text-white px-2 py-1 hover:opacity-90 transition-opacity"
         >
-          <RotateCcw className="size-3" />
-          {t("newUi.sidebar.userProfile.resetToDefaults")}
-        </button>
+          {t("newUi.sidebar.userProfile.donateButton")}
+        </a>
       </div>
+
+      {/* Storage mode toggle — only meaningful once a remote server is
+          connected; with no sync there's nowhere for "cloud" to sync to,
+          so this stays forced to local storage and hidden. */}
+      {(!isElectron() || isRemoteSyncConnected) && (
+        <div className="border border-border bg-card px-3 py-2.5 flex flex-col gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            {t("newUi.sidebar.userProfile.storageModeSwitch")}
+          </span>
+          <div className="flex border border-border overflow-hidden w-full">
+            <button
+              onClick={() => handleStorageModeChange("local")}
+              className={`flex-1 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                storageMode === "local"
+                  ? "bg-accent-brand text-white"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              }`}
+            >
+              {t("newUi.sidebar.userProfile.storageModeLocal")}
+            </button>
+            <button
+              onClick={() => handleStorageModeChange("cloud")}
+              className={`flex-1 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                storageMode === "cloud"
+                  ? "bg-accent-brand text-white"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              }`}
+            >
+              {t("newUi.sidebar.userProfile.storageModeCloud")}
+            </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            {t("newUi.sidebar.userProfile.storageModeDescription")}
+          </p>
+          <button
+            onClick={resetToDefaults}
+            className="self-start flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <RotateCcw className="size-3" />
+            {t("newUi.sidebar.userProfile.resetToDefaults")}
+          </button>
+        </div>
+      )}
 
       {/* Account */}
       <AccordionSection
         id="account"
         label={t("newUi.sidebar.userProfile.sectionAccount")}
         icon={<User className="size-3.5" />}
-        open={openSection === "account"}
+        open={openSections.has("account")}
         onToggle={() => toggle("account")}
       >
         <div className="flex flex-col gap-0 pt-2">
@@ -1255,27 +1454,38 @@ export function UserProfilePanel({
             </div>
           </div>
 
-          {isElectron() && onChangeServer && (
-            <div className="border-t border-border pt-3 mt-3">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium">
-                    {t("serverConfig.changeServer")}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {t("newUi.sidebar.userProfile.changeServerDescription")}
-                  </span>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 ml-3 text-[10px] h-7"
-                  onClick={onChangeServer}
-                >
-                  <Server className="size-3" />
-                  {t("serverConfig.changeServer")}
-                </Button>
+          <div className="border-t border-border pt-3 mt-3">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium">
+                  {t("newUi.sidebar.userProfile.betaProgramTitle")}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {t("newUi.sidebar.userProfile.betaProgramDescription")}{" "}
+                  <a
+                    href="https://github.com/Termix-SSH/Support/issues/new?template=beta_feedback.yml"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-brand hover:underline"
+                  >
+                    {t("newUi.sidebar.userProfile.betaProgramFeedback")}
+                  </a>
+                </span>
               </div>
+              <a
+                href="https://docs.termix.site/install/server/docker#beta-builds"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 ml-3 flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest border border-border px-2 py-1.5 hover:bg-muted/40 transition-colors"
+              >
+                {t("newUi.sidebar.userProfile.betaProgramLearnMore")}
+              </a>
+            </div>
+          </div>
+
+          {isElectron() && (
+            <div className="border-t border-border pt-3 mt-3">
+              <RemoteSyncPanel initialServerUrl={remoteSyncInitialServerUrl} />
             </div>
           )}
 
@@ -1307,7 +1517,7 @@ export function UserProfilePanel({
         id="appearance"
         label={t("newUi.sidebar.userProfile.sectionAppearance")}
         icon={<Palette className="size-3.5" />}
-        open={openSection === "appearance"}
+        open={openSections.has("appearance")}
         onToggle={() => toggle("appearance")}
       >
         <div className="flex flex-col gap-4 pt-3">
@@ -1467,6 +1677,20 @@ export function UserProfilePanel({
                     saveToCloud({ commandAutocomplete: v });
                 }}
               />
+            </SettingRow>
+            <SettingRow
+              label={t("newUi.sidebar.userProfile.keyboardShortcuts")}
+              description={t(
+                "newUi.sidebar.userProfile.keyboardShortcutsDescription",
+              )}
+            >
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setKeybindingsDialogOpen(true)}
+              >
+                {t("newUi.sidebar.userProfile.manageShortcuts")}
+              </Button>
             </SettingRow>
             <div className="flex flex-col gap-1.5 py-3 border-b border-border">
               <div className="flex flex-col gap-0.5">
@@ -1667,6 +1891,11 @@ export function UserProfilePanel({
                   label: t("nav.credentials"),
                 },
                 {
+                  id: "termix-id",
+                  icon: <Fingerprint size={12} />,
+                  label: t("nav.termixId"),
+                },
+                {
                   id: "connections",
                   icon: <Plug size={12} />,
                   label: t("nav.connections"),
@@ -1808,7 +2037,7 @@ export function UserProfilePanel({
         id="security"
         label={t("newUi.sidebar.userProfile.sectionSecurity")}
         icon={<Shield className="size-3.5" />}
-        open={openSection === "security"}
+        open={openSections.has("security")}
         onToggle={() => toggle("security")}
       >
         <div className="flex flex-col gap-4 pt-3">
@@ -2139,7 +2368,7 @@ export function UserProfilePanel({
         id="api-keys"
         label={t("newUi.sidebar.userProfile.sectionApiKeys")}
         icon={<Network className="size-3.5" />}
-        open={openSection === "api-keys"}
+        open={openSections.has("api-keys")}
         onToggle={() => toggle("api-keys")}
       >
         <div className="flex flex-col gap-2 pt-3">
@@ -2240,12 +2469,86 @@ export function UserProfilePanel({
         </div>
       </AccordionSection>
 
+      <AccordionSection
+        id="data"
+        label={t("newUi.sidebar.userProfile.sectionData")}
+        icon={<Database className="size-3.5" />}
+        open={openSections.has("data")}
+        onToggle={() => toggle("data")}
+      >
+        <div className="flex flex-col gap-3 pt-3">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">
+              {t("newUi.sidebar.userProfile.exportData")}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {t("newUi.sidebar.userProfile.exportDataDesc")}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="self-start text-xs border-accent-brand/40 text-accent-brand hover:bg-accent-brand/10 hover:text-accent-brand mt-1"
+              onClick={handleExportData}
+              disabled={exportLoading}
+            >
+              {exportLoading
+                ? t("newUi.sidebar.userProfile.exporting")
+                : t("newUi.sidebar.userProfile.export")}
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1.5 border-t border-border pt-3">
+            <span className="text-xs font-medium">
+              {t("newUi.sidebar.userProfile.importData")}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {importFile
+                ? t("newUi.sidebar.userProfile.importDataSelected", {
+                    name: importFile.name,
+                  })
+                : t("newUi.sidebar.userProfile.importDataDesc")}
+            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".sqlite,.db"
+                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="pointer-events-none text-xs"
+                >
+                  {importFile
+                    ? t("newUi.sidebar.userProfile.changeFile")
+                    : t("newUi.sidebar.userProfile.selectFile")}
+                </Button>
+              </div>
+              {importFile && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs border-accent-brand/40 text-accent-brand hover:bg-accent-brand/10 hover:text-accent-brand"
+                  onClick={handleImportData}
+                  disabled={importLoading}
+                >
+                  {importLoading
+                    ? t("newUi.sidebar.userProfile.importing")
+                    : t("newUi.sidebar.userProfile.import")}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </AccordionSection>
+
       {isElectron() && (
         <AccordionSection
           id="c2s-tunnels"
           label={t("newUi.sidebar.userProfile.sectionC2sTunnels")}
           icon={<Activity className="size-3.5" />}
-          open={openSection === "c2s-tunnels"}
+          open={openSections.has("c2s-tunnels")}
           onToggle={() => toggle("c2s-tunnels")}
         >
           <C2STunnelPresetManager />
@@ -2315,6 +2618,10 @@ export function UserProfilePanel({
           </div>
         </DialogContent>
       </Dialog>
+      <KeybindingsDialog
+        open={keybindingsDialogOpen}
+        onOpenChange={setKeybindingsDialogOpen}
+      />
     </div>
   );
 }

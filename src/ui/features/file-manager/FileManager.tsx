@@ -87,6 +87,7 @@ function FileManagerContent({
   initialPath,
   onClose,
   onOpenTerminalTab,
+  isVisible = true,
 }: FileManagerProps) {
   const { openWindow } = useWindowManager();
   const { t } = useTranslation();
@@ -274,7 +275,7 @@ function FileManagerContent({
   }, [currentHost]);
 
   useEffect(() => {
-    if (sshSessionId) {
+    if (sshSessionId && isVisible) {
       startKeepalive();
     } else {
       stopKeepalive();
@@ -283,7 +284,7 @@ function FileManagerContent({
     return () => {
       stopKeepalive();
     };
-  }, [sshSessionId, startKeepalive, stopKeepalive]);
+  }, [sshSessionId, isVisible, startKeepalive, stopKeepalive]);
 
   const initialFileOpenedRef = useRef(false);
   useEffect(() => {
@@ -3131,6 +3132,7 @@ function FileManagerInner({
   initialPath,
   onClose,
   onOpenTerminalTab,
+  isVisible = true,
 }: FileManagerProps) {
   return (
     <WindowManager>
@@ -3140,6 +3142,7 @@ function FileManagerInner({
         initialPath={initialPath}
         onClose={onClose}
         onOpenTerminalTab={onOpenTerminalTab}
+        isVisible={isVisible}
       />
     </WindowManager>
   );
