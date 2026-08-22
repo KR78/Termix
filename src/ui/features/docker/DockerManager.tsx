@@ -684,7 +684,7 @@ function DockerManagerInner({
             onBack={handleBack}
           />
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+          <div className="flex-1 min-h-0 flex flex-col gap-3 px-3 py-3">
             <Card className="flex flex-col sm:flex-row sm:items-center justify-between px-3 py-3 shrink-0 gap-3">
               <div className="flex items-center gap-3">
                 <div className="size-10 border border-border bg-muted flex items-center justify-center shrink-0">
@@ -778,26 +778,28 @@ function DockerManagerInner({
 
             {sessionId ? (
               !hasLoadedContainersOnce ? (
-                <div className="flex flex-col items-center justify-center h-full opacity-40 py-20">
+                <div className="flex flex-col items-center justify-center flex-1 min-h-0 opacity-40 py-20">
                   <RefreshCw className="size-8 animate-spin mb-4" />
                   <span className="text-sm font-semibold">
                     {t("docker.loadingContainers")}
                   </span>
                 </div>
               ) : (
-                <ContainerList
-                  containers={containers}
-                  sessionId={sessionId}
-                  onSelectContainer={(id) => {
-                    setSelectedContainer(id);
-                    setViewMode("detail");
-                  }}
-                  selectedContainerId={selectedContainer}
-                  onRefresh={refreshContainers}
-                  search={search}
-                  statusFilter={statusFilter}
-                  viewLayout={viewLayout}
-                />
+                <div className="flex-1 min-h-0 overflow-y-auto thin-scrollbar">
+                  <ContainerList
+                    containers={containers}
+                    sessionId={sessionId}
+                    onSelectContainer={(id) => {
+                      setSelectedContainer(id);
+                      setViewMode("detail");
+                    }}
+                    selectedContainerId={selectedContainer}
+                    onRefresh={refreshContainers}
+                    search={search}
+                    statusFilter={statusFilter}
+                    viewLayout={viewLayout}
+                  />
+                </div>
               )
             ) : null}
           </div>

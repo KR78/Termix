@@ -211,7 +211,7 @@ export function ContainerCard({
           title={container.state}
         />
 
-        <div className="flex flex-col min-w-0 w-64 shrink-0">
+        <div className="flex flex-col min-w-0 w-40 md:w-64 shrink-0">
           <span className="text-xs font-bold truncate" title={containerName}>
             {containerName}
           </span>
@@ -220,7 +220,7 @@ export function ContainerCard({
           </span>
         </div>
 
-        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5 overflow-hidden">
           <span
             className="text-[11px] font-mono text-foreground/80 truncate"
             title={container.image}
@@ -228,17 +228,17 @@ export function ContainerCard({
             {container.image}
           </span>
           {shortPorts.length > 0 && (
-            <div className="flex gap-1 flex-wrap">
+            <div className="flex gap-1 flex-nowrap overflow-hidden">
               {shortPorts.map((p) => (
                 <span
                   key={p}
-                  className="text-[9px] font-mono px-1 border border-border bg-muted/30 text-muted-foreground"
+                  className="text-[9px] font-mono px-1 border border-border bg-muted/30 text-muted-foreground shrink-0 whitespace-nowrap"
                 >
                   {p}
                 </span>
               ))}
               {portsList.length > shortPorts.length && (
-                <span className="text-[9px] font-mono text-muted-foreground">
+                <span className="text-[9px] font-mono text-muted-foreground shrink-0">
                   +{portsList.length - shortPorts.length}
                 </span>
               )}
@@ -249,7 +249,7 @@ export function ContainerCard({
         <div className="flex items-center gap-2 shrink-0">
           <DockerBadge state={container.state} />
           <span
-            className="text-[10px] text-muted-foreground italic hidden lg:inline max-w-32 truncate"
+            className="text-[10px] text-muted-foreground italic hidden xl:inline max-w-32 truncate"
             title={container.status}
           >
             {container.status}
@@ -287,8 +287,7 @@ export function ContainerCard({
               )}
             </Button>
           )}
-          {(container.state === "running" ||
-            container.state === "paused") && (
+          {(container.state === "running" || container.state === "paused") && (
             <Button
               variant="ghost"
               size="icon-xs"

@@ -88,7 +88,7 @@ export function ContainerList({
     );
   }
 
-  return (
+  const grid = (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
       {filtered.map((container) => (
         <ContainerCard
@@ -102,4 +102,17 @@ export function ContainerList({
       ))}
     </div>
   );
+
+  // On narrow screens the 4-column grid collapses to 1 column and cards get
+  // tall; let the grid keep a readable minimum width so it scrolls
+  // horizontally inside the page's vertical scroller instead of crushing.
+  if (viewLayout === "grid") {
+    return (
+      <div className="overflow-x-auto thin-scrollbar">
+        <div className="min-w-[320px]">{grid}</div>
+      </div>
+    );
+  }
+
+  return grid;
 }

@@ -1013,6 +1013,10 @@ export function FileManagerGrid({
           ref={gridRef}
           className={cn(
             "absolute inset-0 p-4 overflow-y-auto thin-scrollbar",
+            // List view on touch: the fixed-width table columns exceed phone
+            // viewports, so allow horizontal panning (vertical stays primary
+            // via touch-action on the rows). Grid view never needs this.
+            viewMode === "list" && isTouchPrimary() && "overflow-x-auto",
             dragState.type === "external" &&
               "bg-muted/20 border-2 border-dashed border-primary",
           )}
@@ -1192,8 +1196,13 @@ export function FileManagerGrid({
               </div>
             </div>
           ) : (
-            <div className="flex flex-col">
-              <div className="grid grid-cols-[1fr_120px_150px_80px_90px] gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
+            <div
+              className={cn(
+                "flex flex-col",
+                isTouchPrimary() && "w-max min-w-full",
+              )}
+            >
+              <div className="grid grid-cols-[minmax(140px,1fr)_120px_150px_80px_90px] gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
                 <div
                   className="flex items-center gap-1 cursor-pointer hover:text-accent-brand transition-colors"
                   onClick={() => onSortChange?.("name")}
@@ -1264,7 +1273,7 @@ export function FileManagerGrid({
                         data-file-path={file.path}
                         draggable={true}
                         className={cn(
-                          "grid grid-cols-[1fr_120px_150px_80px_90px] gap-2 px-4 py-2 items-center text-xs cursor-pointer border-b border-border hover:bg-muted/50 rounded-none select-none transition-colors",
+                          "grid grid-cols-[minmax(140px,1fr)_120px_150px_80px_90px] gap-2 px-4 py-2 items-center text-xs cursor-pointer border-b border-border hover:bg-muted/50 rounded-none select-none transition-colors",
                           isSelected && "bg-accent-brand/10",
                           dragState.target?.path === file.path &&
                             "bg-accent-brand/20 border-accent-brand border-dashed",
@@ -1585,7 +1594,7 @@ function CreateIntentListItem({
 
   return (
     <div
-      className="grid grid-cols-[1fr_120px_150px_80px_90px] gap-2 px-4 py-2 items-center border-b border-accent-brand/30 bg-accent-brand/5 rounded-none"
+      className="grid grid-cols-[minmax(140px,1fr)_120px_150px_80px_90px] gap-2 px-4 py-2 items-center border-b border-accent-brand/30 bg-accent-brand/5 rounded-none"
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
