@@ -173,7 +173,28 @@ function FileManagerContent({
     const saved = localStorage.getItem("fileManagerSortOrder");
     return saved === "asc" || saved === "desc" ? saved : "asc";
   });
+  // single-click open mode (lab customization — persisted in localStorage)
+  const [singleClickFolders, setSingleClickFolders] = useState<boolean>(() => {
+    return localStorage.getItem("fileManagerSingleClickFolders") === "true";
+  });
+  const [singleClickFiles, setSingleClickFiles] = useState<boolean>(() => {
+    return localStorage.getItem("fileManagerSingleClickFiles") === "true";
+  });
   const [totpRequired, setTotpRequired] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "fileManagerSingleClickFolders",
+      String(singleClickFolders),
+    );
+  }, [singleClickFolders]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "fileManagerSingleClickFiles",
+      String(singleClickFiles),
+    );
+  }, [singleClickFiles]);
   const [totpSessionId, setTotpSessionId] = useState<string | null>(null);
   const [totpPrompt, setTotpPrompt] = useState<string>("");
   const [warpgateRequired, setWarpgateRequired] = useState(false);
@@ -3153,6 +3174,10 @@ function FileManagerContent({
           setSortBy={setSortBy}
           sortOrder={sortOrder}
           setSortOrder={setSortOrder}
+          singleClickFolders={singleClickFolders}
+          setSingleClickFolders={setSingleClickFolders}
+          singleClickFiles={singleClickFiles}
+          setSingleClickFiles={setSingleClickFiles}
           setMobileSidebarOpen={setMobileSidebarOpen}
           goBack={goBack}
           goForward={goForward}
@@ -3215,6 +3240,8 @@ function FileManagerContent({
                 onUpload={handleFilesDropped}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
+                singleClickFolders={singleClickFolders}
+                singleClickFiles={singleClickFiles}
                 onSortChange={(field) => {
                   if (field === sortBy) {
                     setSortOrder(sortOrder === "asc" ? "desc" : "asc");
