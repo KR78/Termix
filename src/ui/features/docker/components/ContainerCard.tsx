@@ -1,3 +1,4 @@
+import { getErrorMessage } from "../../../lib/error-message.js";
 import React from "react";
 import { Card } from "@/components/card.tsx";
 import { Button } from "@/components/button.tsx";
@@ -99,7 +100,7 @@ export function ContainerCard({
     } catch (err) {
       toast.error(
         t("docker.failedToStartContainer", {
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: getErrorMessage(err),
         }),
       );
     } finally {
@@ -117,7 +118,7 @@ export function ContainerCard({
     } catch (err) {
       toast.error(
         t("docker.failedToStopContainer", {
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: getErrorMessage(err),
         }),
       );
     } finally {
@@ -135,7 +136,7 @@ export function ContainerCard({
     } catch (err) {
       toast.error(
         t("docker.failedToRestartContainer", {
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: getErrorMessage(err),
         }),
       );
     } finally {
@@ -159,7 +160,7 @@ export function ContainerCard({
       toast.error(
         t("docker.failedToTogglePauseContainer", {
           action: container.state === "paused" ? "unpause" : "pause",
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: getErrorMessage(err),
         }),
       );
     } finally {
@@ -187,7 +188,7 @@ export function ContainerCard({
         } catch (err) {
           toast.error(
             t("docker.failedToRemoveContainer", {
-              error: err instanceof Error ? err.message : "Unknown error",
+              error: getErrorMessage(err),
             }),
           );
         } finally {
