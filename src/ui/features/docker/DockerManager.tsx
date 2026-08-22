@@ -108,11 +108,8 @@ function DockerManagerInner({
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [retryCount, setRetryCount] = React.useState(0);
-  const [viewLayout, setViewLayout] = React.useState<"grid" | "compact">(
-    () =>
-      localStorage.getItem("dockerViewLayout") === "compact"
-        ? "compact"
-        : "grid",
+  const [viewLayout, setViewLayout] = React.useState<"grid" | "compact">(() =>
+    localStorage.getItem("dockerViewLayout") === "compact" ? "compact" : "grid",
   );
 
   React.useEffect(() => {
@@ -688,7 +685,7 @@ function DockerManagerInner({
           />
         ) : (
           <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-            <Card className="flex-row items-center justify-between px-3 py-3 shrink-0 gap-0">
+            <Card className="flex flex-col sm:flex-row sm:items-center justify-between px-3 py-3 shrink-0 gap-3">
               <div className="flex items-center gap-3">
                 <div className="size-10 border border-border bg-muted flex items-center justify-center shrink-0">
                   <Box className="size-5 text-accent-brand" />
@@ -711,8 +708,8 @@ function DockerManagerInner({
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="relative w-56">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative w-full sm:w-56">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
                   <Input
                     placeholder={t("docker.searchPlaceholder")}

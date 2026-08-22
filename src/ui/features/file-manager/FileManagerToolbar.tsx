@@ -148,8 +148,8 @@ export function FileManagerToolbar({
 }: FileManagerToolbarProps) {
   return (
     <div className="flex flex-col shrink-0 mx-3 mt-3 border border-border bg-card">
-      <div className="flex flex-row items-center justify-between px-3 py-2 gap-2">
-        <div className="flex items-center gap-1">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between px-3 py-2 gap-2">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none -mx-1 px-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -202,9 +202,9 @@ export function FileManagerToolbar({
           <Breadcrumb currentPath={currentPath} navigateTo={navigateTo} t={t} />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none -mx-1 px-1 md:overflow-visible">
           {selectedFiles.length > 0 && (
-            <div className="flex items-center gap-1 px-2 py-1 bg-accent-brand/10 border border-accent-brand/20 text-accent-brand text-[10px] font-black uppercase tracking-tighter">
+            <div className="flex items-center gap-1 px-2 py-1 bg-accent-brand/10 border border-accent-brand/20 text-accent-brand text-[10px] font-black uppercase tracking-tighter shrink-0">
               <Button
                 variant="ghost"
                 size="icon"
@@ -224,7 +224,7 @@ export function FileManagerToolbar({
             </div>
           )}
 
-          <div className="relative w-28 md:w-48">
+          <div className="relative w-28 md:w-48 shrink-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               placeholder={t("fileManager.searchFiles")}

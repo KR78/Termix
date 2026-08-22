@@ -161,6 +161,17 @@ const getFileIcon = (file: FileItem, viewMode: "grid" | "list" = "grid") => {
   }
 };
 
+// --- LOCAL CUSTOMIZATION: long-press context menu on touch (see docs/local-customizations.md) ---
+const LONG_PRESS_MS = 500;
+
+function isTouchPrimary(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  // Coarse pointer = phone/tablet. Pen/fine pointer (desktop, stylus) keeps
+  // native right-click + drag behavior untouched.
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+// --- END LOCAL CUSTOMIZATION ---
+
 export function FileManagerGrid({
   files,
   selectedFiles,
@@ -391,6 +402,70 @@ export function FileManagerGrid({
 
     onSystemDragEnd?.(e.nativeEvent, draggedFiles);
   };
+
+  // --- LOCAL CUSTOMIZATION: long-press context menu on touch (see docs/local-customizations.md) ---
+  // On touch devices the HTML5 drag hijack fires on long-press and traps the
+  // user in download mode with no way out. Instead, long-press (500ms) opens
+  // the same context menu as a desktop right-click; native dragging stays
+  // disabled on touch so scrolling is never hijacked.
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
+  useEffect(() => clearLongPress, [clearLongPress]);
+
+  const handleTouchStart = useCallback(
+    (file: FileItem) => (e: React.TouchEvent) => {
+      if (!isTouchPrimary()) return;
+      longPressFiredRef.current = false;
+      const touch = e.touches[0];
+      if (!touch) return;
+      longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTimerRef.current = null;
+        longPressFiredRef.current = true;
+        onContextMenu?.(
+          {
+            preventDefault: () => {},
+            stopPropagation: () => {},
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          } as unknown as React.MouseEvent,
+          file,
+        );
+      }, LONG_PRESS_MS);
+    },
+    [onContextMenu],
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      // Cancel if the finger moves — that's a scroll or an attempted drag
+      const start = longPressStartRef.current;
+      const touch = e.touches[0];
+      if (start && touch) {
+        const dx = touch.clientX - start.x;
+        const dy = touch.clientY - start.y;
+        if (Math.hypot(dx, dy) > 10) {
+          clearLongPress();
+        }
+      }
+    },
+    [clearLongPress],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    clearLongPress();
+  }, [clearLongPress]);
+  // --- END LOCAL CUSTOMIZATION ---
 
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState<{
@@ -1030,13 +1105,36 @@ export function FileManagerGrid({
                                 ) && "opacity-50",
                               )}
                               title={file.name}
-                              onClick={(e) => handleFileClick(file, e)}
+                              onClick={(e) => {
+                                if (
+                                  isTouchPrimary() &&
+                                  longPressFiredRef.current
+                                ) {
+                                  longPressFiredRef.current = false;
+                                  return;
+                                }
+                                handleFileClick(file, e);
+                              }}
                               onContextMenu={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 onContextMenu?.(e, file);
                               }}
-                              onDragStart={(e) => handleFileDragStart(e, file)}
+                              onTouchStart={handleTouchStart(file)}
+                              onTouchMove={handleTouchMove}
+                              onTouchEnd={handleTouchEnd}
+                              onTouchCancel={handleTouchEnd}
+                              style={{ touchAction: "pan-y" }}
+                              onDragStart={(e) => {
+                                // Touch devices: dragging hijacks long-press and
+                                // traps users in download mode — keep native drag
+                                // desktop-only. Long-press opens the context menu.
+                                if (isTouchPrimary()) {
+                                  e.preventDefault();
+                                  return;
+                                }
+                                handleFileDragStart(e, file);
+                              }}
                               onDragOver={(e) => handleFileDragOver(e, file)}
                               onDragLeave={(e) => handleFileDragLeave(e, file)}
                               onDrop={(e) => handleFileDrop(e, file)}
@@ -1173,13 +1271,33 @@ export function FileManagerGrid({
                           dragState.files.some((f) => f.path === file.path) &&
                             "opacity-50",
                         )}
-                        onClick={(e) => handleFileClick(file, e)}
+                        onClick={(e) => {
+                          if (isTouchPrimary() && longPressFiredRef.current) {
+                            longPressFiredRef.current = false;
+                            return;
+                          }
+                          handleFileClick(file, e);
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                           onContextMenu?.(e, file);
                         }}
-                        onDragStart={(e) => handleFileDragStart(e, file)}
+                        onTouchStart={handleTouchStart(file)}
+                        onTouchMove={handleTouchMove}
+                        onTouchEnd={handleTouchEnd}
+                        onTouchCancel={handleTouchEnd}
+                        style={{ touchAction: "pan-y" }}
+                        onDragStart={(e) => {
+                          // Touch devices: dragging hijacks long-press and
+                          // traps users in download mode — keep native drag
+                          // desktop-only. Long-press opens the context menu.
+                          if (isTouchPrimary()) {
+                            e.preventDefault();
+                            return;
+                          }
+                          handleFileDragStart(e, file);
+                        }}
                         onDragOver={(e) => handleFileDragOver(e, file)}
                         onDragLeave={(e) => handleFileDragLeave(e, file)}
                         onDrop={(e) => handleFileDrop(e, file)}

@@ -70,18 +70,20 @@ export function ContainerList({
 
   if (viewLayout === "compact") {
     return (
-      <div className="flex flex-col border border-border bg-card overflow-hidden">
-        {filtered.map((container) => (
-          <ContainerCard
-            key={container.id}
-            container={container}
-            sessionId={sessionId}
-            onSelect={() => onSelectContainer(container.id)}
-            isSelected={selectedContainerId === container.id}
-            onRefresh={onRefresh}
-            variant="compact"
-          />
-        ))}
+      <div className="border border-border bg-card overflow-x-auto thin-scrollbar">
+        <div className="flex flex-col min-w-[540px]">
+          {filtered.map((container) => (
+            <ContainerCard
+              key={container.id}
+              container={container}
+              sessionId={sessionId}
+              onSelect={() => onSelectContainer(container.id)}
+              isSelected={selectedContainerId === container.id}
+              onRefresh={onRefresh}
+              variant="compact"
+            />
+          ))}
+        </div>
       </div>
     );
   }
